@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -10,6 +10,7 @@ import { getWeeklyTrackingGoals, saveWeeklyTrackingGoals, type WeeklyTrackingGoa
 import { getTodayDate, isValidDateString, shiftDate } from '../utils/date';
 import { getSettings } from '../repositories/settingsRepository';
 import { weightFromStorage, weightToStorage, type WeightUnit } from '../utils/weight';
+import { useSelectedDate } from '../contexts/SelectedDateContext';
 
 function validDate(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -20,6 +21,7 @@ function validDate(value: string) {
 
 export default function HistoryScreen() {
   const db = useSQLiteContext();
+  const { setSelectedDate } = useSelectedDate();
   const [weekEndDate, setWeekEndDate] = useState(getTodayDate());
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState(getTodayDate().slice(0, 7));
@@ -144,7 +146,8 @@ export default function HistoryScreen() {
   const loggedDays = weekly?.dailyCalories.filter((day) => day.calories > 0).length ?? 0;
   const periodLabel = weekly ? `${formatShortDate(weekly.dailyCalories[0].date)} – ${formatShortDate(weekly.dailyCalories[6].date)}` : '';
 
-  return <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+  return <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+  <ScrollView style={styles.scroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
     <Pressable accessibilityRole="button" onPress={() => router.replace('/explore')}><Text style={styles.back}>← More</Text></Pressable>
     <Text style={styles.title}>Weekly averages</Text>
     <View style={styles.weekSwitcher}><Pressable accessibilityLabel="Earlier 7-day period" onPress={() => movePeriod(-1)} style={styles.weekArrow}><Ionicons name="chevron-back" size={18} color="#25634C" /></Pressable><View style={styles.weekLabelWrap}><Text style={styles.weekDates}>{periodLabel || 'Choose a date range'}</Text><Text style={styles.weekCaption}>7-day average</Text></View><Pressable accessibilityLabel="Later 7-day period" disabled={weekEndDate >= getTodayDate()} onPress={() => movePeriod(1)} style={[styles.weekArrow, weekEndDate >= getTodayDate() && styles.disabled]}><Ionicons name="chevron-forward" size={18} color="#25634C" /></Pressable>{weekEndDate !== getTodayDate() && <Pressable onPress={showToday} style={styles.thisWeekButton}><Text style={styles.thisWeekText}>Today</Text></Pressable>}</View>
@@ -221,9 +224,10 @@ export default function HistoryScreen() {
       <Text style={styles.label}>Steps</Text>
       <TextInput value={steps} onChangeText={setSteps} placeholder="Leave blank to keep current steps" keyboardType="number-pad" style={styles.input} />
       <Pressable disabled={dateLoading} onPress={save} style={[styles.button, dateLoading && styles.disabled]}><Text style={styles.buttonText}>{dateLoading ? 'Loading day…' : 'Save day'}</Text></Pressable>
-      <View style={styles.dayActions}><Pressable disabled={!isValidDateString(date) || date > getTodayDate()} onPress={() => router.push({ pathname: '/add-meal', params: { date, returnTo: 'history' } })} style={[styles.dayAction, (!isValidDateString(date) || date > getTodayDate()) && styles.disabled]}><Ionicons name="restaurant-outline" size={16} color="#25634C" /><Text style={styles.dayActionText}>Edit meals</Text></Pressable><Pressable disabled={!isValidDateString(date) || date > getTodayDate()} onPress={() => router.push({ pathname: '/workouts', params: { date, returnTo: 'history' } })} style={[styles.dayAction, (!isValidDateString(date) || date > getTodayDate()) && styles.disabled]}><Ionicons name="barbell-outline" size={16} color="#25634C" /><Text style={styles.dayActionText}>Edit activity</Text></Pressable></View>
+      <View style={styles.dayActions}><Pressable disabled={!isValidDateString(date) || date > getTodayDate()} onPress={() => router.push({ pathname: '/add-meal', params: { date, returnTo: 'history' } })} style={[styles.dayAction, (!isValidDateString(date) || date > getTodayDate()) && styles.disabled]}><Ionicons name="restaurant-outline" size={16} color="#25634C" /><Text style={styles.dayActionText}>Edit meals</Text></Pressable><Pressable disabled={!isValidDateString(date) || date > getTodayDate()} onPress={() => { setSelectedDate(date); router.push({ pathname: '/workouts', params: { returnTo: 'history' } }); }} style={[styles.dayAction, (!isValidDateString(date) || date > getTodayDate()) && styles.disabled]}><Ionicons name="barbell-outline" size={16} color="#25634C" /><Text style={styles.dayActionText}>Edit activity</Text></Pressable></View>
     </View>}
-  </ScrollView>;
+  </ScrollView>
+  </KeyboardAvoidingView>;
 }
 
 function MetricCard({ icon, label, value, unit, goal, tint, color }: { icon: React.ComponentProps<typeof Ionicons>['name']; label: string; value: string; unit: string; goal: string; tint: string; color: string }) {
@@ -273,7 +277,7 @@ function formatDate(value: string) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#F7F8FA' }, content: { padding: 18, paddingTop: 52, paddingBottom: 36 },
+  screen: { flex: 1, backgroundColor: '#F7F8FA' }, scroll: { flex: 1 }, content: { padding: 18, paddingTop: 52, paddingBottom: 120 },
   back: { color: '#25634C', fontWeight: '600', marginBottom: 14 }, title: { color: '#111827', fontSize: 28, fontWeight: '700' }, subtitle: { color: '#6B7280', marginTop: 4, marginBottom: 13, fontSize: 13 },
   card: { backgroundColor: '#FFF', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 10 }, sectionTitle: { color: '#111827', fontSize: 15, fontWeight: '700' }, heading: { color: '#111827', fontSize: 17, fontWeight: '700', marginTop: 2, marginBottom: 8 },
   loadingCard: { minHeight: 110, alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#FFF', borderRadius: 14, borderWidth: 1, borderColor: '#E5E7EB' }, emptyCard: { backgroundColor: '#FFF', padding: 16, borderRadius: 14, borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 12 }, emptyTitle: { color: '#111827', fontWeight: '700', fontSize: 15, marginBottom: 4 }, retryButton: { alignSelf: 'flex-start', backgroundColor: '#EAF4EF', borderRadius: 8, marginTop: 12, paddingVertical: 8, paddingHorizontal: 12 }, retryText: { color: '#1D513D', fontWeight: '700' },

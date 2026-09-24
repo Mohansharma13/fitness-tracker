@@ -15,7 +15,9 @@
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -103,6 +105,7 @@ import { getWeeklySummary } from '../services/analyticsService';
 import { getSettings } from '../repositories/settingsRepository';
 import { weightFromStorage, weightToStorage, type WeightUnit } from '../utils/weight';
 import { getWorkoutsForDate } from '../repositories/workoutRepository';
+import { useSelectedDate } from '../contexts/SelectedDateContext';
 
 
 // ============================================================
@@ -154,7 +157,7 @@ export default function DashboardScreen() {
   // _layout.tsx using SQLiteProvider.
   //
   const db = useSQLiteContext();
-  const [selectedDate, setSelectedDate] = useState(getTodayDate());
+  const { selectedDate, setSelectedDate } = useSelectedDate();
   const [calendarVisible, setCalendarVisible] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
   const [weekly, setWeekly] = useState<Awaited<ReturnType<typeof getWeeklySummary>> | null>(null);
@@ -408,9 +411,12 @@ export default function DashboardScreen() {
   // long when the user has several meals.
   //
   return (
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="on-drag"
     >
 
       {/* ======================================================
@@ -426,13 +432,13 @@ export default function DashboardScreen() {
 
       <Text style={styles.date}>{selectedDate === getTodayDate() ? 'Today' : 'Daily log'}</Text>
       <View style={styles.datePickerRow}>
-        <Pressable style={styles.dateButton} onPress={() => setSelectedDate((date) => shiftDate(date, -1))} accessibilityLabel="Previous day"><Text style={styles.dateButtonText}>‹</Text></Pressable>
+        <Pressable style={styles.dateButton} onPress={() => setSelectedDate(shiftDate(selectedDate, -1))} accessibilityLabel="Previous day"><Text style={styles.dateButtonText}>‹</Text></Pressable>
         <Pressable style={styles.selectedDateButton} onPress={() => { setCalendarMonth(selectedDateObject); setCalendarVisible(true); }} accessibilityRole="button" accessibilityLabel={`Choose date, ${formatDateLabel(selectedDateObject)}`}>
           <Ionicons name="calendar-outline" size={18} color="#374151" />
           <Text style={styles.selectedDateText}>{formatDateLabel(selectedDateObject)}</Text>
           <Ionicons name="chevron-down" size={16} color="#6B7280" />
         </Pressable>
-        <Pressable style={styles.dateButton} disabled={selectedDate >= getTodayDate()} onPress={() => setSelectedDate((date) => shiftDate(date, 1))} accessibilityLabel="Next day" accessibilityState={{ disabled: selectedDate >= getTodayDate() }}><Text style={[styles.dateButtonText, selectedDate >= getTodayDate() && styles.disabledDateText]}>›</Text></Pressable>
+        <Pressable style={styles.dateButton} disabled={selectedDate >= getTodayDate()} onPress={() => setSelectedDate(shiftDate(selectedDate, 1))} accessibilityLabel="Next day" accessibilityState={{ disabled: selectedDate >= getTodayDate() }}><Text style={[styles.dateButtonText, selectedDate >= getTodayDate() && styles.disabledDateText]}>›</Text></Pressable>
       </View>
       {selectedDate !== getTodayDate() && <Pressable onPress={() => setSelectedDate(getTodayDate())}><Text style={styles.todayLink}>Go to today</Text></Pressable>}
 
@@ -569,7 +575,10 @@ export default function DashboardScreen() {
 
         <View style={styles.mealsHeading}>
           <Text style={styles.sectionTitle}>Meals ({mealCount})</Text>
-          <Pressable style={styles.addMealButton} onPress={() => router.push({ pathname: '/add-meal', params: { date: selectedDate } } as never)}><Ionicons name="add" size={18} color="#FFFFFF" /><Text style={styles.addMealText}>Add meal</Text></Pressable>
+          <View style={styles.mealActions}>
+            <Pressable style={styles.quickMealButton} onPress={() => router.push({ pathname: '/add-meal', params: { date: selectedDate, mode: 'quick' } } as never)}><Ionicons name="flash-outline" size={15} color="#374151" /><Text style={styles.quickMealText}>Quick log</Text></Pressable>
+            <Pressable style={styles.addMealButton} onPress={() => router.push({ pathname: '/add-meal', params: { date: selectedDate } } as never)}><Ionicons name="add" size={18} color="#FFFFFF" /><Text style={styles.addMealText}>Add meal</Text></Pressable>
+          </View>
         </View>
 
 
@@ -619,7 +628,7 @@ export default function DashboardScreen() {
 
                   <View style={styles.mealTitleBlock}>
                     <Text style={styles.mealName}>{meal.mealName}</Text>
-                    <Text style={styles.mealCount}>{meal.items.length} {meal.items.length === 1 ? 'food' : 'foods'} · {expandedMealId === meal.id ? 'Tap to hide' : 'Tap for details'}</Text>
+                    <Text style={styles.mealCount}>{meal.quickMacros ? 'Quick entry' : `${meal.items.length} ${meal.items.length === 1 ? 'food' : 'foods'}`} · {expandedMealId === meal.id ? 'Tap to hide' : 'Tap for details'}</Text>
                   </View>
 
 
@@ -639,6 +648,8 @@ export default function DashboardScreen() {
                     ============================================ */}
 
                 <View style={styles.foodList}>
+
+                  {meal.quickMacros && <Text style={styles.foodQuantity}>Nutrition entered as meal totals</Text>}
 
                   {meal.items.map((item) => (
 
@@ -758,6 +769,7 @@ export default function DashboardScreen() {
                       pathname: '/add-meal',
                       params: {
                         editMealId: meal.id,
+                        date: selectedDate,
                       },
                     });
                   }}
@@ -806,6 +818,7 @@ export default function DashboardScreen() {
       </View>
 
     </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -954,7 +967,10 @@ const styles = StyleSheet.create({
   activityActions: { flexDirection: 'row', gap: 8, borderTopWidth: 1, borderTopColor: '#F3F4F6', paddingTop: 10 },
   workoutLink: { flex: 1, flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 9, paddingVertical: 10 },
   workoutLinkText: { color: '#374151', fontSize: 12, fontWeight: '600' },
-  mealsHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  mealsHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6 },
+  mealActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  quickMealButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 9, paddingHorizontal: 8, paddingVertical: 8, marginBottom: 10 },
+  quickMealText: { color: '#374151', fontSize: 11, fontWeight: '700' },
   addMealButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3, backgroundColor: '#111827', borderRadius: 9, paddingHorizontal: 11, paddingVertical: 8, marginBottom: 10 },
   addMealText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
 

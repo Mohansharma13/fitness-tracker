@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -18,8 +19,10 @@ import { useSQLiteContext } from 'expo-sqlite';
 import { createExerciseLog, createWorkoutLog, deleteExerciseLog, deleteWorkoutLog, getWorkoutsForDate } from '../repositories/workoutRepository';
 import { getSettings } from '../repositories/settingsRepository';
 import type { WorkoutLog } from '../types/workout';
-import { getTodayDate, isValidDateString } from '../utils/date';
+import { useSelectedDate } from '../contexts/SelectedDateContext';
 import { weightFromStorage, weightToStorage, type WeightUnit } from '../utils/weight';
+import { applyWorkoutTemplate, createWorkoutTemplateFromWorkout, getWorkoutTemplates, type WorkoutTemplate } from '../repositories/templateRepository';
+import { getTodayDate, shiftDate } from '../utils/date';
 
 const QUICK_WORKOUTS = ['Strength', 'Run', 'Walk', 'Cycling'];
 
@@ -32,10 +35,11 @@ function displayDate(value: string): string {
 
 export default function WorkoutsScreen() {
   const db = useSQLiteContext();
-  const { date: requestedDate, returnTo } = useLocalSearchParams<{ date?: string; returnTo?: string }>();
-  const selectedDate = typeof requestedDate === 'string' && isValidDateString(requestedDate) ? requestedDate : getTodayDate();
+  const { returnTo } = useLocalSearchParams<{ returnTo?: string }>();
+  const { selectedDate, setSelectedDate } = useSelectedDate();
 
   const [workouts, setWorkouts] = useState<WorkoutLog[]>([]);
+  const [workoutTemplates, setWorkoutTemplates] = useState<WorkoutTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -51,11 +55,31 @@ export default function WorkoutsScreen() {
   const [exerciseSets, setExerciseSets] = useState('');
   const [exerciseReps, setExerciseReps] = useState('');
   const [exerciseWeight, setExerciseWeight] = useState('');
+  const [calendarVisible, setCalendarVisible] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const [year, month, day] = selectedDate.split('-').map(Number);
+    return new Date(year, month - 1, day);
+  });
   const requestId = useRef(0);
+  const loadQueue = useRef<Promise<void>>(Promise.resolve());
+
+  const today = getTodayDate();
+  const selectedDateObject = (() => {
+    const [year, month, day] = selectedDate.split('-').map(Number);
+    return new Date(year, month - 1, day);
+  })();
+  const monthStart = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1);
+  const daysInMonth = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0).getDate();
+  const calendarCells: (Date | null)[] = [
+    ...Array.from({ length: monthStart.getDay() }, () => null),
+    ...Array.from({ length: daysInMonth }, (_, index) => new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), index + 1)),
+  ];
+  while (calendarCells.length % 7 !== 0) calendarCells.push(null);
+  const monthTitle = calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  const isCurrentMonth = calendarMonth.getFullYear() === new Date().getFullYear() && calendarMonth.getMonth() === new Date().getMonth();
 
   const goBack = () => {
-    if (returnTo === 'history' && router.canGoBack()) router.back();
-    else router.replace(returnTo === 'history' ? '/history' : '/');
+    router.replace(returnTo === 'history' ? '/history' : '/');
   };
 
   useEffect(() => {
@@ -64,17 +88,27 @@ export default function WorkoutsScreen() {
 
   const loadWorkouts = useCallback(async () => {
     const request = ++requestId.current;
-    try {
-      setLoading(true);
-      setLoadError(false);
-      const result = await getWorkoutsForDate(db, selectedDate);
-      if (request === requestId.current) setWorkouts(result);
-    } catch (error) {
-      console.error('Failed to load workouts:', error);
-      if (request === requestId.current) setLoadError(true);
-    } finally {
-      if (request === requestId.current) setLoading(false);
-    }
+    const runLoad = async () => {
+      if (request !== requestId.current) return;
+      try {
+        setLoading(true);
+        setLoadError(false);
+        const result = await getWorkoutsForDate(db, selectedDate);
+        const templates = await getWorkoutTemplates(db);
+        if (request === requestId.current) {
+          setWorkouts(result);
+          setWorkoutTemplates(templates);
+        }
+      } catch (error) {
+        console.error('Failed to load workouts:', error);
+        if (request === requestId.current) setLoadError(true);
+      } finally {
+        if (request === requestId.current) setLoading(false);
+      }
+    };
+    const queuedLoad = loadQueue.current.then(runLoad, runLoad);
+    loadQueue.current = queuedLoad.then(() => undefined, () => undefined);
+    await queuedLoad;
   }, [db, selectedDate]);
 
   useFocusEffect(useCallback(() => {
@@ -102,7 +136,7 @@ export default function WorkoutsScreen() {
       setNotes('');
       setNotesExpanded(false);
       await loadWorkouts();
-      Alert.alert('Workout saved', `Workout recorded for ${selectedDate}.`);
+      Alert.alert('Workout saved', `Recorded for ${displayDate(selectedDate)}. Add exercises, then save it as a routine if you want to reuse it on other dates.`);
     } catch (error) {
       console.error('Failed to save workout:', error);
       Alert.alert('Could not save workout', 'Please try again.');
@@ -167,6 +201,36 @@ export default function WorkoutsScreen() {
     }
   };
 
+  const saveWorkoutTemplate = async (workout: WorkoutLog) => {
+    if (!workout.exercises.length) {
+      Alert.alert('Add exercises first', 'Add at least one exercise to this workout before saving a reusable template.');
+      return;
+    }
+    try {
+      await createWorkoutTemplateFromWorkout(db, workout, workout.workoutType);
+      await loadWorkouts();
+      Alert.alert('Routine saved', `${workout.workoutType} is now available for any date in Saved routines.`);
+    } catch (error) {
+      console.error('Failed to save workout template:', error);
+      Alert.alert('Could not save template', error instanceof Error ? error.message : 'Please try again.');
+    }
+  };
+
+  const startWorkoutTemplate = async (template: WorkoutTemplate) => {
+    if (!template.exercises.length) {
+      Alert.alert('Template is empty', 'Add exercises to this template in Manage before using it.');
+      return;
+    }
+    try {
+      await applyWorkoutTemplate(db, template.id, selectedDate);
+      await loadWorkouts();
+      Alert.alert('Workout added', `${template.name} was added to ${selectedDate}.`);
+    } catch (error) {
+      console.error('Failed to start workout template:', error);
+      Alert.alert('Could not start workout', error instanceof Error ? error.message : 'Please try again.');
+    }
+  };
+
   const confirmDeleteExercise = (exerciseId: string, name: string) => Alert.alert(
     'Remove exercise',
     `Remove ${name} from this workout?`,
@@ -195,13 +259,29 @@ export default function WorkoutsScreen() {
         <View style={styles.headingRow}>
           <View style={styles.headingCopy}>
             <Text style={styles.title}>Activity</Text>
-            <Text style={styles.subtitle}>{displayDate(selectedDate)}</Text>
+            <Text style={styles.subtitle}>Log and review your workouts</Text>
           </View>
-          <View style={styles.dateBadge}><Ionicons name="calendar-outline" size={15} color="#4B5563" /><Text style={styles.dateBadgeText}>{selectedDate}</Text></View>
+        </View>
+
+        <View style={styles.dateNavigator}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Previous day" style={styles.dateArrow} onPress={() => setSelectedDate(shiftDate(selectedDate, -1))}>
+            <Ionicons name="chevron-back" size={18} color="#374151" />
+          </Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel={`Choose workout date, currently ${displayDate(selectedDate)}`} style={styles.datePickerButton} onPress={() => { setCalendarMonth(selectedDateObject); setCalendarVisible(true); }}>
+            <Ionicons name="calendar-outline" size={17} color="#25634C" />
+            <View style={styles.datePickerCopy}>
+              <Text style={styles.datePickerTitle}>{selectedDate === today ? 'Today' : displayDate(selectedDate)}</Text>
+              <Text style={styles.datePickerSubtitle}>{selectedDate === today ? displayDate(selectedDate) : 'Tap to choose another date'}</Text>
+            </View>
+            <Ionicons name="chevron-down" size={16} color="#6B7280" />
+          </Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Next day" style={[styles.dateArrow, selectedDate >= today && styles.dateArrowDisabled]} onPress={() => { if (selectedDate < today) setSelectedDate(shiftDate(selectedDate, 1)); }} disabled={selectedDate >= today}>
+            <Ionicons name="chevron-forward" size={18} color={selectedDate >= today ? '#C4C9D0' : '#374151'} />
+          </Pressable>
         </View>
 
         <View style={styles.logCard}>
-          <Text style={styles.sectionTitle}>Log a workout</Text>
+          <View style={styles.logHeading}><Text style={styles.sectionTitle}>Log a workout</Text><Text style={styles.logDate}>{selectedDate === today ? 'Today' : displayDate(selectedDate)}</Text></View>
           <TextInput value={workoutName} onChangeText={setWorkoutName} placeholder="Workout name" returnKeyType="next" style={styles.input} />
           <View style={styles.quickChoices}>
             {QUICK_WORKOUTS.map((item) => <Pressable key={item} onPress={() => setWorkoutName(item)} style={[styles.quickChoice, workoutName === item && styles.quickChoiceActive]}><Text style={[styles.quickChoiceText, workoutName === item && styles.quickChoiceTextActive]}>{item}</Text></Pressable>)}
@@ -219,6 +299,19 @@ export default function WorkoutsScreen() {
             <Ionicons name="add" size={19} color="#FFFFFF" />
             <Text style={styles.saveText}>{saving ? 'Saving…' : 'Save workout'}</Text>
           </Pressable>
+        </View>
+
+        <View style={styles.templateSection}>
+          <View style={styles.templateHeadingRow}>
+            <View><Text style={styles.sectionTitle}>Saved routines</Text><Text style={styles.templateHint}>Reusable on any date</Text></View>
+            <Pressable accessibilityRole="button" accessibilityLabel="Manage saved workout templates" style={styles.manageTemplates} onPress={() => router.push('/templates?section=workouts')}>
+              <Ionicons name="settings-outline" size={15} color="#25634C" /><Text style={styles.manageTemplatesText}>Manage</Text>
+            </Pressable>
+          </View>
+          {workoutTemplates.length === 0 ? <Text style={styles.noTemplates}>After adding exercises, tap the bookmark on a workout to save it here for reuse.</Text> : workoutTemplates.map((template) => <View key={template.id} style={styles.templateCard}>
+            <View style={styles.templateCopy}><Text style={styles.templateName}>{template.name}</Text><Text style={styles.templateExercises} numberOfLines={2}>{template.exercises.map((exercise) => `${exercise.exerciseName} ${exercise.sets ?? '—'}×${exercise.reps ?? '—'}`).join(' · ')}</Text></View>
+            <Pressable style={styles.templateStart} onPress={() => startWorkoutTemplate(template)} accessibilityRole="button" accessibilityLabel={`Add ${template.name} to ${selectedDate}`}><Ionicons name="add" size={16} color="#FFFFFF" /><Text style={styles.templateStartText}>Add</Text></Pressable>
+          </View>)}
         </View>
 
         <View style={styles.listHeading}>
@@ -242,6 +335,9 @@ export default function WorkoutsScreen() {
                 </View>
                 <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={18} color="#6B7280" />
               </Pressable>
+              {workout.exercises.length > 0 && <Pressable accessibilityRole="button" accessibilityLabel={`Save ${workout.workoutType} as a reusable routine`} style={styles.bookmarkButton} onPress={() => saveWorkoutTemplate(workout)}>
+                <Ionicons name="bookmark-outline" size={17} color="#25634C" />
+              </Pressable>}
             </View>
 
             {expanded && <View style={styles.workoutDetails}>
@@ -275,6 +371,39 @@ export default function WorkoutsScreen() {
           </View>;
         })}
       </ScrollView>
+      <Modal visible={calendarVisible} transparent animationType="fade" onRequestClose={() => setCalendarVisible(false)}>
+        <View style={styles.calendarBackdrop}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setCalendarVisible(false)} accessibilityLabel="Close calendar" />
+          <View style={styles.calendarCard}>
+            <View style={styles.calendarHeader}>
+              <View><Text style={styles.calendarTitle}>Choose a date</Text><Text style={styles.calendarSubtitle}>Select the day for this workout</Text></View>
+              <Pressable accessibilityRole="button" accessibilityLabel="Close date picker" onPress={() => setCalendarVisible(false)} style={styles.calendarClose}><Ionicons name="close" size={20} color="#4B5563" /></Pressable>
+            </View>
+            <View style={styles.monthNav}>
+              <Pressable accessibilityRole="button" accessibilityLabel="Previous month" style={styles.monthArrow} onPress={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}><Ionicons name="chevron-back" size={18} color="#374151" /></Pressable>
+              <Text style={styles.monthTitle}>{monthTitle}</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="Next month" disabled={isCurrentMonth} style={[styles.monthArrow, isCurrentMonth && styles.dateArrowDisabled]} onPress={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}><Ionicons name="chevron-forward" size={18} color={isCurrentMonth ? '#C4C9D0' : '#374151'} /></Pressable>
+            </View>
+            <View style={styles.calendarGrid}>
+              {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, index) => <Text key={`${day}-${index}`} style={styles.weekday}>{day}</Text>)}
+              {calendarCells.map((day, index) => {
+                if (!day) return <View key={`blank-${index}`} style={styles.calendarDayCell} />;
+                const dateValue = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+                const future = dateValue > today;
+                const selected = dateValue === selectedDate;
+                const isToday = dateValue === today;
+                return <Pressable key={dateValue} disabled={future} accessibilityRole="button" accessibilityLabel={displayDate(dateValue)} accessibilityState={{ selected, disabled: future }} style={styles.calendarDayCell} onPress={() => { setSelectedDate(dateValue); setCalendarVisible(false); }}>
+                  <View style={[styles.calendarDay, selected && styles.calendarDaySelected, isToday && !selected && styles.calendarDayToday]}><Text style={[styles.calendarDayText, selected && styles.calendarDayTextSelected, future && styles.calendarDayTextDisabled]}>{day.getDate()}</Text></View>
+                </Pressable>;
+              })}
+            </View>
+            <View style={styles.calendarFooter}>
+              <Pressable style={styles.todayButton} onPress={() => { setSelectedDate(today); setCalendarMonth(new Date()); setCalendarVisible(false); }}><Text style={styles.todayButtonText}>Go to today</Text></Pressable>
+              <Pressable style={styles.calendarDone} onPress={() => setCalendarVisible(false)}><Text style={styles.calendarDoneText}>Done</Text></Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -288,9 +417,28 @@ const styles = StyleSheet.create({
   headingCopy: { flex: 1 },
   title: { fontSize: 27, fontWeight: '700', color: '#111827' },
   subtitle: { color: '#6B7280', marginTop: 3, fontSize: 13 },
-  dateBadge: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 9, paddingHorizontal: 8, paddingVertical: 7 },
-  dateBadgeText: { color: '#4B5563', fontSize: 10, fontWeight: '600' },
-  logCard: { backgroundColor: '#FFFFFF', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 20 },
+  dateNavigator: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 13, backgroundColor: '#FFFFFF', padding: 6, borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12 },
+  dateArrow: { width: 37, height: 40, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F3F4F6' },
+  dateArrowDisabled: { opacity: 0.55 },
+  datePickerButton: { flex: 1, minHeight: 40, flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 5 },
+  datePickerCopy: { flex: 1 },
+  datePickerTitle: { color: '#111827', fontSize: 13, fontWeight: '700' },
+  datePickerSubtitle: { color: '#6B7280', fontSize: 10, marginTop: 2 },
+  logCard: { backgroundColor: '#FFFFFF', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 18 },
+  logHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  logDate: { color: '#6B7280', fontSize: 11, fontWeight: '600' },
+  templateSection: { marginBottom: 20 },
+  templateHeadingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  templateHint: { color: '#6B7280', fontSize: 11, marginTop: 3 },
+  manageTemplates: { minHeight: 36, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingHorizontal: 10, borderWidth: 1, borderColor: '#CFE2D8', borderRadius: 9, backgroundColor: '#F3FAF6' },
+  manageTemplatesText: { color: '#25634C', fontWeight: '700', fontSize: 12 },
+  noTemplates: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 11, padding: 12, color: '#6B7280', fontSize: 12, lineHeight: 18 },
+  templateCard: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 11, padding: 11, marginTop: 7 },
+  templateCopy: { flex: 1 },
+  templateName: { color: '#111827', fontWeight: '700', fontSize: 13 },
+  templateExercises: { color: '#6B7280', fontSize: 11, marginTop: 4, lineHeight: 15 },
+  templateStart: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, backgroundColor: '#25634C' },
+  templateStartText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700' },
   sectionTitle: { fontSize: 17, fontWeight: '700', color: '#111827' },
   input: { backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 9, paddingHorizontal: 11, paddingVertical: 10, color: '#111827', fontSize: 14 },
   quickChoices: { flexDirection: 'row', gap: 7, marginTop: 8 },
@@ -318,12 +466,13 @@ const styles = StyleSheet.create({
   retryButton: { marginTop: 4, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#111827', borderRadius: 8 },
   retryText: { color: '#FFFFFF', fontWeight: '700', fontSize: 12 },
   workoutCard: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 7, marginBottom: 7 },
-  workoutSummaryRow: { flexDirection: 'row', alignItems: 'center' },
+  workoutSummaryRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   workoutSummary: { flex: 1, minHeight: 47, flexDirection: 'row', alignItems: 'center', gap: 9 },
   workoutIcon: { width: 34, height: 34, borderRadius: 10, backgroundColor: '#F3F4F6', alignItems: 'center', justifyContent: 'center' },
   workoutSummaryCopy: { flex: 1 },
   workoutName: { color: '#111827', fontSize: 14, fontWeight: '700' },
   workoutMeta: { color: '#6B7280', fontSize: 11, marginTop: 3 },
+  bookmarkButton: { width: 37, height: 37, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: '#F3FAF6', borderWidth: 1, borderColor: '#CFE2D8' },
   workoutDetails: { borderTopWidth: 1, borderTopColor: '#F3F4F6', paddingTop: 9 },
   noteText: { color: '#4B5563', fontSize: 12, marginBottom: 6 },
   exerciseRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
@@ -340,4 +489,27 @@ const styles = StyleSheet.create({
   numberInput: { flex: 1, minWidth: 0, paddingHorizontal: 7, fontSize: 12 },
   saveExerciseButton: { alignItems: 'center', backgroundColor: '#374151', borderRadius: 8, paddingVertical: 10 },
   saveExerciseText: { color: '#FFFFFF', fontWeight: '700', fontSize: 12 },
+  calendarBackdrop: { flex: 1, justifyContent: 'center', padding: 20, backgroundColor: 'rgba(17, 24, 39, 0.45)' },
+  calendarCard: { backgroundColor: '#FFFFFF', borderRadius: 18, padding: 17, borderWidth: 1, borderColor: '#E5E7EB' },
+  calendarHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  calendarTitle: { color: '#111827', fontSize: 18, fontWeight: '700' },
+  calendarSubtitle: { color: '#6B7280', fontSize: 12, marginTop: 3 },
+  calendarClose: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F3F4F6' },
+  monthNav: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 13, marginBottom: 7 },
+  monthArrow: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', borderRadius: 9 },
+  monthTitle: { color: '#111827', fontSize: 14, fontWeight: '700' },
+  calendarGrid: { flexDirection: 'row', flexWrap: 'wrap' },
+  weekday: { width: '14.2857%', textAlign: 'center', color: '#6B7280', fontSize: 11, fontWeight: '700', paddingVertical: 7 },
+  calendarDayCell: { width: '14.2857%', height: 42, alignItems: 'center', justifyContent: 'center' },
+  calendarDay: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  calendarDaySelected: { backgroundColor: '#25634C' },
+  calendarDayToday: { borderWidth: 1, borderColor: '#25634C' },
+  calendarDayText: { color: '#374151', fontSize: 13, fontWeight: '500' },
+  calendarDayTextSelected: { color: '#FFFFFF', fontWeight: '700' },
+  calendarDayTextDisabled: { color: '#D1D5DB' },
+  calendarFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#F3F4F6' },
+  todayButton: { paddingVertical: 9, paddingHorizontal: 10 },
+  todayButtonText: { color: '#25634C', fontSize: 13, fontWeight: '700' },
+  calendarDone: { backgroundColor: '#111827', borderRadius: 9, paddingVertical: 9, paddingHorizontal: 17 },
+  calendarDoneText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
 });

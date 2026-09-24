@@ -65,17 +65,36 @@ export async function deleteExerciseFromLibrary(db: SQLiteDatabase, id: string):
 
 export async function getWorkoutsForDate(db: SQLiteDatabase, date: string): Promise<WorkoutLog[]> {
   const rows = await db.getAllAsync<any>(
-    `SELECT w.* FROM workout_logs w
+    `SELECT w.*,
+       e.id AS exercise_id, e.workout_log_id AS exercise_workout_log_id,
+       e.exercise_name, e.sets, e.reps, e.weight, e.notes AS exercise_notes
+     FROM workout_logs w
      INNER JOIN daily_logs d ON d.id = w.daily_log_id
+     LEFT JOIN exercises e ON e.workout_log_id = w.id AND e.deleted_at IS NULL
      WHERE d.date = ? AND d.deleted_at IS NULL AND w.deleted_at IS NULL
-     ORDER BY w.created_at DESC`,
+     ORDER BY w.created_at DESC, e.created_at ASC`,
     date
   );
-  const workouts = rows.map(mapWorkout);
-  for (const workout of workouts) {
-    workout.exercises = await getExercisesForWorkout(db, workout.id);
+  const workoutsById = new Map<string, WorkoutLog>();
+  for (const row of rows) {
+    let workout = workoutsById.get(row.id);
+    if (!workout) {
+      workout = mapWorkout(row);
+      workoutsById.set(workout.id, workout);
+    }
+    if (row.exercise_id) {
+      workout.exercises.push(mapExercise({
+        id: row.exercise_id,
+        workout_log_id: row.exercise_workout_log_id,
+        exercise_name: row.exercise_name,
+        sets: row.sets,
+        reps: row.reps,
+        weight: row.weight,
+        notes: row.exercise_notes,
+      }));
+    }
   }
-  return workouts;
+  return [...workoutsById.values()];
 }
 
 export async function getWorkoutCountForDate(db: SQLiteDatabase, date: string): Promise<number> {
@@ -101,7 +120,7 @@ export async function getRecentWorkoutHistory(db: SQLiteDatabase, limit = 60): P
 
 export async function createExerciseLog(
   db: SQLiteDatabase,
-  input: { workoutLogId: string; exerciseName: string; sets: number | null; reps: number | null; weight: number | null }
+  input: { workoutLogId: string; exerciseName: string; sets: number | null; reps: number | null; weight: number | null; notes?: string | null }
 ): Promise<ExerciseLog> {
   await saveExerciseToLibrary(db, input.exerciseName);
   const id = generateId();
@@ -112,7 +131,7 @@ export async function createExerciseLog(
       created_at, updated_at, deleted_at, sync_status
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id, null, input.workoutLogId, input.exerciseName.trim(), input.sets, input.reps,
-    input.weight, null, now, now, null, 'local'
+    input.weight, input.notes ?? null, now, now, null, 'local'
   );
   const row = await db.getFirstAsync<any>('SELECT * FROM exercises WHERE id = ?', id);
   if (!row) throw new Error('Failed to create exercise log');

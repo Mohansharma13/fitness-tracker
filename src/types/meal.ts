@@ -6,6 +6,7 @@ export interface Meal {
 
   mealName: string;
   notes: string | null;
+  quickMacros: MealMacros | null;
 
   createdAt: string;
   updatedAt: string;

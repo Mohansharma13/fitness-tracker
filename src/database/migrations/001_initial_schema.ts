@@ -63,6 +63,11 @@ export async function migrateDatabase(db: SQLiteDatabase) {
       daily_log_id TEXT NOT NULL,
       meal_name TEXT NOT NULL,
       notes TEXT,
+      quick_calories REAL,
+      quick_protein REAL,
+      quick_carbs REAL,
+      quick_fat REAL,
+      quick_fibre REAL,
 
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -286,5 +291,11 @@ export async function migrateDatabase(db: SQLiteDatabase) {
   const goalColumns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(goals)');
   if (!goalColumns.some((column) => column.name === 'workout_target')) {
     await db.execAsync('ALTER TABLE goals ADD COLUMN workout_target INTEGER');
+  }
+  const mealColumns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(meals)');
+  for (const column of ['quick_calories', 'quick_protein', 'quick_carbs', 'quick_fat', 'quick_fibre']) {
+    if (!mealColumns.some((existing) => existing.name === column)) {
+      await db.execAsync(`ALTER TABLE meals ADD COLUMN ${column} REAL`);
+    }
   }
 }

@@ -7,6 +7,7 @@ import { Appearance, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { initializeDatabase } from '../database/database';
 import { getSettings } from '../repositories/settingsRepository';
+import { SelectedDateProvider } from '../contexts/SelectedDateContext';
 
 // Keep the native app logo visible until SQLite and the first screen are ready.
 void SplashScreen.preventAutoHideAsync();
@@ -56,7 +57,8 @@ function AppTabs() {
   }, []);
 
   return (
-    <Tabs screenOptions={{ headerShown: false }}>
+    <SelectedDateProvider>
+    <Tabs backBehavior="history" screenOptions={{ headerShown: false, tabBarHideOnKeyboard: true }}>
       <Tabs.Screen
         name="index"
         options={{
@@ -94,6 +96,7 @@ function AppTabs() {
       <Tabs.Screen name="food-edit" options={{ href: null }} />
       <Tabs.Screen name="exercise-library" options={{ href: null }} />
     </Tabs>
+    </SelectedDateProvider>
   );
 }
 

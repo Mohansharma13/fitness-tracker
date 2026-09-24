@@ -25,6 +25,8 @@ function calculateFoodMacros(
 export function calculateMealMacros(
   meal: MealWithItems
 ): MealMacros {
+  if (meal.quickMacros) return meal.quickMacros;
+
   return meal.items.reduce(
     (total, item) => {
       if (!item.food) {

@@ -37,6 +37,7 @@ import {
 } from '../repositories/mealRepository';
 
 import type { Food } from '../types/food';
+import type { MealMacros } from '../types/meal';
 
 type SelectedFood = {
   id: string;
@@ -58,20 +59,23 @@ export default function AddMealScreen() {
     editMealId,
     date: requestedDate,
     returnTo: requestedReturnTo,
+    mode: requestedMode,
   } = useLocalSearchParams<{
     editMealId?: string;
     date?: string;
     returnTo?: string;
+    mode?: string;
   }>();
   const mealDate = typeof requestedDate === 'string' && isValidDateString(requestedDate) ? requestedDate : getTodayDate();
   const returnToHistory = requestedReturnTo === 'history';
   const goBack = () => {
-    if (returnToHistory && router.canGoBack()) router.back();
-    else router.replace(returnToHistory ? '/history' : '/');
+    router.replace(returnToHistory ? '/history' : '/');
   };
 
   const [mealName, setMealName] =
-    useState('Breakfast');
+    useState(requestedMode === 'quick' ? 'Lunch' : 'Breakfast');
+  const [entryMode, setEntryMode] = useState<'foods' | 'quick'>(requestedMode === 'quick' ? 'quick' : 'foods');
+  const [quickValues, setQuickValues] = useState({ calories: '', protein: '', carbs: '', fat: '', fibre: '' });
 
   const [search, setSearch] =
     useState('');
@@ -109,6 +113,16 @@ export default function AddMealScreen() {
         }
 
         setMealName(meal.mealName);
+        if (meal.quickMacros) {
+          setEntryMode('quick');
+          setQuickValues({
+            calories: String(meal.quickMacros.calories),
+            protein: String(meal.quickMacros.protein),
+            carbs: String(meal.quickMacros.carbs),
+            fat: String(meal.quickMacros.fat),
+            fibre: String(meal.quickMacros.fibre),
+          });
+        }
 
         setSelectedFoods(
           meal.items.map((item) => ({
@@ -299,18 +313,38 @@ export default function AddMealScreen() {
         return;
       }
 
-      if (!editMealId && selectedFoods.length === 0) {
+      if (entryMode === 'foods' && selectedFoods.length === 0) {
         Alert.alert('Add a food first', 'Choose at least one food for this meal.');
         return;
       }
 
-      if (selectedFoods.some((item) => !Number.isFinite(item.quantity) || item.quantity <= 0)) {
+      if (entryMode === 'foods' && selectedFoods.some((item) => !Number.isFinite(item.quantity) || item.quantity <= 0)) {
         Alert.alert('Check food quantities', 'Each food quantity must be greater than zero grams.');
         return;
       }
 
       try {
         setSaving(true);
+        let quickMacros: MealMacros | null = null;
+        if (entryMode === 'quick') {
+          const parseValue = (value: string) => value.trim() === '' ? 0 : Number(value);
+          const values: MealMacros = {
+            calories: parseValue(quickValues.calories),
+            protein: parseValue(quickValues.protein),
+            carbs: parseValue(quickValues.carbs),
+            fat: parseValue(quickValues.fat),
+            fibre: parseValue(quickValues.fibre),
+          };
+          if (Object.values(values).some((value) => !Number.isFinite(value) || value < 0)) {
+            Alert.alert('Check nutrition values', 'Enter non-negative numbers, or leave values blank.');
+            return;
+          }
+          if (!Object.values(values).some((value) => value > 0)) {
+            Alert.alert('Add nutrition details', 'Enter at least one calorie or nutrient value for this meal.');
+            return;
+          }
+          quickMacros = values;
+        }
 
         /*
          * EDIT EXISTING MEAL
@@ -320,12 +354,13 @@ export default function AddMealScreen() {
             db,
             editMealId,
             mealName,
-            selectedFoods.map(
+            entryMode === 'quick' ? [] : selectedFoods.map(
               (item) => ({
                 foodId: item.food.id,
                 quantity: item.quantity,
               })
-            )
+            ),
+            quickMacros
           );
         }
 
@@ -335,9 +370,11 @@ export default function AddMealScreen() {
         else {
           await db.withTransactionAsync(async () => {
             const dailyLog = await getOrCreateDailyLog(db, { date: mealDate });
-            const meal = await createMeal(db, dailyLog.id, mealName.trim());
-            for (const item of selectedFoods) {
-              await addMealItem(db, meal.id, item.food.id, item.quantity);
+            const meal = await createMeal(db, dailyLog.id, mealName.trim(), quickMacros);
+            if (entryMode === 'foods') {
+              for (const item of selectedFoods) {
+                await addMealItem(db, meal.id, item.food.id, item.quantity);
+              }
             }
           });
         }
@@ -398,7 +435,7 @@ export default function AddMealScreen() {
             : 'Log a meal or open your food library.'}
         </Text>
 
-        {!editMealId && <Pressable
+        {!editMealId && entryMode === 'foods' && <Pressable
           onPress={() => router.push({ pathname: '/foods', params: { date: mealDate, ...(returnToHistory ? { returnTo: 'history' } : {}) } } as never)}
           style={styles.libraryButton}
         >
@@ -452,6 +489,43 @@ export default function AddMealScreen() {
             )
           )}
         </ScrollView>
+
+        <View style={styles.modeSwitch}>
+          <Pressable onPress={() => setEntryMode('foods')} style={[styles.modeButton, entryMode === 'foods' && styles.modeButtonActive]}>
+            <Text style={[styles.modeText, entryMode === 'foods' && styles.modeTextActive]}>Use food library</Text>
+          </Pressable>
+          <Pressable onPress={() => setEntryMode('quick')} style={[styles.modeButton, entryMode === 'quick' && styles.modeButtonActive]}>
+            <Text style={[styles.modeText, entryMode === 'quick' && styles.modeTextActive]}>Quick meal</Text>
+          </Pressable>
+        </View>
+
+        {entryMode === 'quick' ? <>
+          <View style={styles.quickHintCard}>
+            <Text style={styles.quickHintTitle}>Log a meal without food cards</Text>
+            <Text style={styles.quickHintText}>Enter the meal’s nutrition totals. You can leave values you don’t know blank.</Text>
+          </View>
+          <Text style={styles.sectionTitle}>Meal name</Text>
+          <TextInput value={mealName} onChangeText={setMealName} placeholder="e.g. Homemade lunch" style={styles.searchInput} maxLength={60} />
+          <Text style={styles.sectionTitle}>Meal nutrition</Text>
+          <View style={styles.quickGrid}>
+            {([
+              ['calories', 'Calories', 'kcal'],
+              ['protein', 'Protein', 'g'],
+              ['carbs', 'Carbs', 'g'],
+              ['fat', 'Fat', 'g'],
+              ['fibre', 'Fibre', 'g'],
+            ] as const).map(([key, label, unit]) => <View key={key} style={styles.quickField}>
+              <Text style={styles.quickLabel}>{label}</Text>
+              <View style={styles.quickInputRow}>
+                <TextInput value={quickValues[key]} onChangeText={(value) => setQuickValues((current) => ({ ...current, [key]: value }))} placeholder="0" keyboardType="decimal-pad" style={styles.quickInput} />
+                <Text style={styles.quickUnit}>{unit}</Text>
+              </View>
+            </View>)}
+          </View>
+          <Pressable style={[styles.saveButton, saving && styles.saveButtonDisabled]} onPress={handleSaveMeal} disabled={saving}>
+            <Text style={styles.saveButtonText}>{saving ? 'Saving...' : editMealId ? 'Save Changes' : 'Add Meal'}</Text>
+          </Pressable>
+        </> : <>
 
         {/* Add Food */}
 
@@ -778,6 +852,7 @@ export default function AddMealScreen() {
             <Text style={styles.saveButtonText}>{saving ? 'Saving...' : 'Save Changes'}</Text>
           </Pressable>
         )}
+        </>}
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -897,6 +972,21 @@ const styles = StyleSheet.create({
   mealTypeTextActive: {
     color: '#FFFFFF',
   },
+
+  modeSwitch: { flexDirection: 'row', backgroundColor: '#EEF0F3', borderRadius: 10, padding: 3, marginTop: 14, marginBottom: 7 },
+  modeButton: { flex: 1, alignItems: 'center', paddingVertical: 9, borderRadius: 8 },
+  modeButtonActive: { backgroundColor: '#FFFFFF', shadowColor: '#111827', shadowOpacity: 0.08, shadowRadius: 3, elevation: 1 },
+  modeText: { color: '#6B7280', fontWeight: '600', fontSize: 12 },
+  modeTextActive: { color: '#111827' },
+  quickHintCard: { backgroundColor: '#F0F7F3', borderRadius: 11, padding: 13, marginTop: 12 },
+  quickHintTitle: { color: '#1F513E', fontSize: 13, fontWeight: '700' },
+  quickHintText: { color: '#52665C', fontSize: 12, lineHeight: 17, marginTop: 4 },
+  quickGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 4 },
+  quickField: { width: '47%', minWidth: 120 },
+  quickLabel: { color: '#4B5563', fontSize: 12, fontWeight: '600', marginBottom: 5 },
+  quickInputRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  quickInput: { flex: 1, backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 9, paddingHorizontal: 10, paddingVertical: 10, color: '#111827', fontSize: 14 },
+  quickUnit: { color: '#6B7280', fontSize: 12, width: 24 },
 
   searchInput: {
     backgroundColor: '#FFFFFF',

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { exportBackup, importBackup, validateBackup } from '../services/backupService';
@@ -35,7 +35,8 @@ export default function BackupScreen() {
       ]);
     } catch (error) { Alert.alert('Invalid backup', error instanceof Error ? error.message : 'Check the pasted JSON.'); }
   };
-  return <ScrollView style={styles.screen} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+  return <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+  <ScrollView style={styles.screen} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
     <Pressable accessibilityRole="button" onPress={() => router.replace('/explore')}><Text style={styles.back}>‹  More</Text></Pressable>
     <Text style={styles.title}>Backup & restore</Text><Text style={styles.subtitle}>Move your tracker data safely to another device.</Text>
     <View style={styles.card}>
@@ -53,7 +54,8 @@ export default function BackupScreen() {
       <Pressable onPress={restore} disabled={busy || !json.trim()} style={[styles.button, (!json.trim() || busy) && styles.disabled]}>{busy ? <ActivityIndicator color="#FFF" /> : <Text style={styles.buttonText}>Validate and restore</Text>}</Pressable>
     </View>
     <Text style={styles.privacy}>Backup files contain personal health data. Store them somewhere private.</Text>
-  </ScrollView>;
+  </ScrollView>
+  </KeyboardAvoidingView>;
 }
 
 function Choice({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) { return <Pressable accessibilityRole="radio" accessibilityState={{ checked: active }} onPress={onPress} style={[styles.choice, active && styles.active]}><Text style={[styles.choiceText, active && styles.activeText]}>{label}</Text></Pressable>; }

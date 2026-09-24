@@ -3,6 +3,7 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 import type {
   Meal,
   MealItem,
+  MealMacros,
   MealWithItems,
 } from '../types/meal';
 
@@ -16,6 +17,13 @@ function mapMeal(row: any): Meal {
 
     mealName: row.meal_name,
     notes: row.notes,
+    quickMacros: row.quick_calories == null ? null : {
+      calories: row.quick_calories,
+      protein: row.quick_protein ?? 0,
+      carbs: row.quick_carbs ?? 0,
+      fat: row.quick_fat ?? 0,
+      fibre: row.quick_fibre ?? 0,
+    },
 
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -53,7 +61,8 @@ function mapMealItem(row: any): MealItem {
 export async function createMeal(
   db: SQLiteDatabase,
   dailyLogId: string,
-  mealName: string
+  mealName: string,
+  quickMacros: MealMacros | null = null
 ): Promise<Meal> {
   const id = generateId();
   const now = new Date().toISOString();
@@ -66,18 +75,28 @@ export async function createMeal(
         daily_log_id,
         meal_name,
         notes,
+        quick_calories,
+        quick_protein,
+        quick_carbs,
+        quick_fat,
+        quick_fibre,
         created_at,
         updated_at,
         deleted_at,
         sync_status
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     id,
     null,
     dailyLogId,
     mealName,
     null,
+    quickMacros?.calories ?? null,
+    quickMacros?.protein ?? null,
+    quickMacros?.carbs ?? null,
+    quickMacros?.fat ?? null,
+    quickMacros?.fibre ?? null,
     now,
     now,
     null,
@@ -252,6 +271,11 @@ export async function getMealById(
     daily_log_id: string;
     meal_name: string;
     notes: string | null;
+    quick_calories: number | null;
+    quick_protein: number | null;
+    quick_carbs: number | null;
+    quick_fat: number | null;
+    quick_fibre: number | null;
     created_at: string;
     updated_at: string;
   }>(
@@ -261,6 +285,11 @@ export async function getMealById(
       daily_log_id,
       meal_name,
       notes,
+      quick_calories,
+      quick_protein,
+      quick_carbs,
+      quick_fat,
+      quick_fibre,
       created_at,
       updated_at
     FROM meals
@@ -325,6 +354,13 @@ export async function getMealById(
     dailyLogId: meal.daily_log_id,
     mealName: meal.meal_name,
     notes: meal.notes,
+    quickMacros: meal.quick_calories == null ? null : {
+      calories: meal.quick_calories,
+      protein: meal.quick_protein ?? 0,
+      carbs: meal.quick_carbs ?? 0,
+      fat: meal.quick_fat ?? 0,
+      fibre: meal.quick_fibre ?? 0,
+    },
     createdAt: meal.created_at,
     updatedAt: meal.updated_at,
 
@@ -395,7 +431,8 @@ export async function updateMeal(
   items: {
     foodId: string;
     quantity: number;
-  }[]
+  }[],
+  quickMacros: MealMacros | null = null
 ): Promise<void> {
   const now = new Date().toISOString();
 
@@ -406,12 +443,22 @@ export async function updateMeal(
       UPDATE meals
       SET
         meal_name = ?,
+        quick_calories = ?,
+        quick_protein = ?,
+        quick_carbs = ?,
+        quick_fat = ?,
+        quick_fibre = ?,
         updated_at = ?,
         sync_status = 'local'
       WHERE id = ?
         AND deleted_at IS NULL
       `,
       mealName,
+      quickMacros?.calories ?? null,
+      quickMacros?.protein ?? null,
+      quickMacros?.carbs ?? null,
+      quickMacros?.fat ?? null,
+      quickMacros?.fibre ?? null,
       now,
       mealId
     );
