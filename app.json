@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "FitnessTracker",
+    "name": "Fitness Tracker",
     "slug": "FitnessTracker",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -11,6 +11,7 @@
       "icon": "./assets/expo.icon"
     },
     "android": {
+      "package": "com.mohansharma.fitnesstracker",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -32,11 +33,19 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }
-      ]
+      ],
+      "expo-sqlite"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "4724a4c0-a8a1-4a43-9d6c-4cc0d65ae6fe"
+      }
+    },
+    "owner": "mohan.sharma"
   }
 }

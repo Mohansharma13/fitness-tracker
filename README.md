@@ -1,56 +1,77 @@
-# Welcome to your Expo app 👋
+# Fitness Tracker
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+An Android-first, offline fitness and food tracker. Your logs are stored locally on your device.
 
-## Get started
+## Download the APK
 
-1. Install dependencies
+[**Download Fitness Tracker for Android**](https://drive.google.com/uc?export=download&id=1DLvFPrjQA5Dn6hdYFivyP2jsQEKgnn2T)
 
-   ```bash
-   npm install
-   ```
+The APK is hosted on Google Drive. If Google Drive asks for access, the file owner needs to set General access to **Anyone with the link**. The download link will keep working when the APK is replaced in the same Drive file.
 
-2. Start the app
+## Features
 
-   ```bash
-   npx expo start
-   ```
+- Log meals, foods, calories, protein, carbohydrates, fat, and fibre.
+- Track weight, steps, workouts, and exercises by date.
+- Review daily graphs and rolling seven-day averages.
+- Set weekly tracking targets.
+- Back up and restore app data as JSON.
+- Use core tracking features offline; data stays in the local SQLite database.
 
-In the output, you'll find options to open the app in a
+## Development
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+### Requirements
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+- Node.js and npm
+- Android emulator or Android device for app testing
 
-## Get a fresh project
+### Run the app
 
-When you're ready, run:
+From the `Projects/FitnessTracker` directory:
 
-```bash
-npm run reset-project
+```powershell
+npm install
+npx expo start --android
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+If Metro has stale state, run:
 
-### Other setup steps
+```powershell
+npx expo start --android -c
+```
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+### Build an APK
 
-## Learn more
+The EAS `preview` profile creates an installable APK for direct distribution:
 
-To learn more about developing your project with Expo, look at the following resources:
+```powershell
+npx eas-cli@latest login
+npx eas-cli@latest project:init
+npx eas-cli@latest build --platform android --profile preview
+```
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+The Android application ID is `com.mohansharma.fitnesstracker`. After the cloud build completes, download the APK from the EAS build page and replace the existing APK in Google Drive to keep the download link stable.
 
-## Join the community
+### Project checks
 
-Join our community of developers creating universal apps.
+```powershell
+npx expo lint
+npx tsc --noEmit
+```
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## Project structure
+
+```text
+src/app/             Expo Router screens
+src/database/        SQLite initialization and schema
+src/hooks/           Screen data hooks
+src/repositories/    SQLite data access
+src/services/        Nutrition, analytics, and backup logic
+src/types/           TypeScript data models
+src/utils/           Dates, IDs, and unit conversion
+```
+
+## Privacy
+
+The app stores tracking data on the device. Backups may contain personal health information; store them in a private location.
+
+Made by Mohan Sharma.

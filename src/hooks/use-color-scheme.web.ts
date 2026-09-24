@@ -7,9 +7,12 @@ import { useColorScheme as useRNColorScheme } from 'react-native';
 export function useColorScheme() {
   const [hasHydrated, setHasHydrated] = useState(false);
 
+  // Hydration state prevents a server/client color-scheme mismatch on web.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     setHasHydrated(true);
   }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const colorScheme = useRNColorScheme();
 
