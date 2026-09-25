@@ -6,8 +6,8 @@ import { deleteFood, getFoodById, updateFood } from '../repositories/foodReposit
 
 export default function EditFoodScreen() {
   const db = useSQLiteContext();
-  const { foodId, date: requestedDate, returnTo } = useLocalSearchParams<{ foodId: string; date?: string; returnTo?: string }>();
-  const returnToFoods = useCallback(() => router.replace({ pathname: '/foods', params: { ...(typeof requestedDate === 'string' ? { date: requestedDate } : {}), ...(returnTo === 'history' ? { returnTo: 'history' } : {}) } } as never), [requestedDate, returnTo]);
+  const { foodId, date: requestedDate, returnTo, fromMeal, editMealId } = useLocalSearchParams<{ foodId: string; date?: string; returnTo?: string; fromMeal?: string; editMealId?: string }>();
+  const returnToFoods = useCallback(() => router.replace({ pathname: '/foods', params: { ...(typeof requestedDate === 'string' ? { date: requestedDate } : {}), ...(returnTo === 'history' ? { returnTo: 'history' } : {}), ...(fromMeal === '1' ? { fromMeal } : {}), ...(editMealId ? { editMealId } : {}) } } as never), [requestedDate, returnTo, fromMeal, editMealId]);
   const [form, setForm] = useState({ name: '', servingSize: '100', calories: '', protein: '', carbs: '', fat: '', fibre: '' });
   const [busy, setBusy] = useState(false);
   const load = useCallback(async () => {

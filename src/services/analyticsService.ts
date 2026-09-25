@@ -12,6 +12,7 @@ import { getWorkoutCountForDate } from '../repositories/workoutRepository';
 import {
   calculateDailyMacros,
 } from './macroService';
+import { averageMetrics, getDailyMetricsInRange } from './rangeAnalyticsService';
 
 export async function getDailyDashboard(
   db: SQLiteDatabase,
@@ -50,30 +51,21 @@ export async function getWeeklySummary(db: SQLiteDatabase, date = new Date()): P
     day.setDate(day.getDate() - (6 - offset));
     return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
   });
-  const dashboards = await Promise.all(dates.map((day) => getDailyDashboard(db, day)));
-  const averageMacros = dashboards.reduce((sum, item) => ({
-    calories: sum.calories + item.dailyMacros.calories / 7,
-    protein: sum.protein + item.dailyMacros.protein / 7,
-    carbs: sum.carbs + item.dailyMacros.carbs / 7,
-    fat: sum.fat + item.dailyMacros.fat / 7,
-    fibre: sum.fibre + item.dailyMacros.fibre / 7,
-  }), { calories: 0, protein: 0, carbs: 0, fat: 0, fibre: 0 });
-  const rows = await db.getAllAsync<{ date: string; steps: number | null; weight: number | null }>(
-    'SELECT date, steps, weight FROM daily_logs WHERE deleted_at IS NULL AND date BETWEEN ? AND ?', dates[0], dates[6]
-  );
-  const workout = await db.getFirstAsync<{ count: number }>(
-    `SELECT COUNT(*) AS count FROM workout_logs w JOIN daily_logs d ON d.id = w.daily_log_id
-     WHERE w.deleted_at IS NULL AND d.deleted_at IS NULL AND d.date BETWEEN ? AND ?`, dates[0], dates[6]
-  );
-  const measuredWeights = rows.map((row) => row.weight).filter((value): value is number => value !== null);
-  const logsByDate = new Map(rows.map((row) => [row.date, row]));
+  const days = await getDailyMetricsInRange(db, dates[0], dates[6]);
+  const averages = averageMetrics(days, dates[0], dates[6]);
   return {
-    averageMacros,
-    averageSteps: rows.reduce((sum, row) => sum + (row.steps ?? 0), 0) / 7,
-    averageWeight: measuredWeights.length ? measuredWeights.reduce((sum, value) => sum + value, 0) / measuredWeights.length : null,
-    workoutCount: workout?.count ?? 0,
-    dailyCalories: dashboards.map((item) => ({ date: item.date, calories: item.dailyMacros.calories })),
-    dailySteps: dates.map((day) => ({ date: day, steps: logsByDate.get(day)?.steps ?? 0 })),
-    dailyWeights: dates.map((day) => ({ date: day, weight: logsByDate.get(day)?.weight ?? null })),
+    averageMacros: {
+      calories: averages.averageCalories,
+      protein: averages.averageProtein,
+      carbs: averages.averageCarbs,
+      fat: averages.averageFat,
+      fibre: averages.averageFibre,
+    },
+    averageSteps: averages.averageSteps,
+    averageWeight: averages.averageWeight,
+    workoutCount: averages.workoutCount,
+    dailyCalories: days.map(({ date: day, calories }) => ({ date: day, calories })),
+    dailySteps: days.map(({ date: day, steps }) => ({ date: day, steps })),
+    dailyWeights: days.map(({ date: day, weight }) => ({ date: day, weight })),
   };
 }

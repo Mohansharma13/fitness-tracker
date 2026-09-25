@@ -1,5 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 import * as FileSystem from 'expo-file-system/legacy';
+import { getTodayDate } from '../utils/date';
 
 const HEADERS = [
   'Date', 'Calories consumed (kcal)', 'Protein (g)', 'Carbohydrates (g)', 'Fat (g)', 'Fibre (g)',
@@ -86,7 +87,7 @@ export async function createCsvExportData(db: SQLiteDatabase): Promise<CsvExport
     row.steps,
     row.notes,
   ]))];
-  const dateStamp = new Date().toISOString().slice(0, 10);
+  const dateStamp = getTodayDate();
   return {
     filename: `Fitness-Tracker-Daily-Summary-${dateStamp}.csv`,
     rowCount: rows.length,

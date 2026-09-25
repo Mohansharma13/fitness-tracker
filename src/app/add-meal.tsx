@@ -72,6 +72,12 @@ export default function AddMealScreen() {
   const goBack = () => {
     router.replace(returnToHistory ? '/history' : '/');
   };
+  const finishSaving = () => {
+    // This screen is a persistent Food tab. Remove edit/date/mode params before
+    // leaving so reopening the tab starts a fresh meal instead of stale edit UI.
+    router.setParams({ editMealId: undefined, date: undefined, returnTo: undefined, mode: undefined });
+    goBack();
+  };
 
   const [mealName, setMealName] =
     useState(requestedMode === 'quick' ? 'Lunch' : 'Breakfast');
@@ -418,7 +424,7 @@ export default function AddMealScreen() {
           });
         }
 
-        goBack();
+        finishSaving();
       } catch (error) {
         console.error(
           'Failed to save meal:',
@@ -474,8 +480,8 @@ export default function AddMealScreen() {
             : 'Log a meal or open your food library.'}
         </Text>
 
-        {!editMealId && entryMode === 'foods' && <Pressable
-          onPress={() => { openingFoodLibrary.current = true; router.push({ pathname: '/foods', params: { date: mealDate, ...(returnToHistory ? { returnTo: 'history' } : {}) } } as never); }}
+        {entryMode === 'foods' && <Pressable
+          onPress={() => { openingFoodLibrary.current = true; router.push({ pathname: '/foods', params: { date: mealDate, fromMeal: '1', ...(editMealId ? { editMealId } : {}), ...(returnToHistory ? { returnTo: 'history' } : {}) } } as never); }}
           style={styles.libraryButton}
         >
           <Text style={styles.libraryButtonText}>Open Food Library</Text>

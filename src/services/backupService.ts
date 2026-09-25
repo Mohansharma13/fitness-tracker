@@ -1,5 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 import * as FileSystem from 'expo-file-system/legacy';
+import { getTodayDate } from '../utils/date';
 
 const TABLES = [
   'daily_logs', 'foods', 'meals', 'meal_items', 'meal_templates', 'template_items',
@@ -17,7 +18,7 @@ export async function createBackupFile(db: SQLiteDatabase): Promise<{ uri: strin
   if (!FileSystem.cacheDirectory) throw new Error('Temporary file storage is not available on this device.');
   const content = await exportBackup(db);
   const data = validateBackup(content);
-  const dateStamp = new Date().toISOString().slice(0, 10);
+  const dateStamp = getTodayDate();
   const filename = `Fitness-Tracker-Backup-${dateStamp}.json`;
   const uri = `${FileSystem.cacheDirectory}${filename}`;
   await FileSystem.writeAsStringAsync(uri, content, { encoding: FileSystem.EncodingType.UTF8 });
@@ -29,7 +30,8 @@ export async function saveBackupToDirectory(db: SQLiteDatabase, directoryUri: st
   const content = await exportBackup(db);
   const data = validateBackup(content);
   const now = new Date();
-  const stamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
   const filename = `Fitness-Tracker-Backup-${stamp}.json`;
   const fileUri = await FileSystem.StorageAccessFramework.createFileAsync(
     directoryUri,

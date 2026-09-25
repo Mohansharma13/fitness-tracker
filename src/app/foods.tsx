@@ -143,8 +143,14 @@ function formatFoodCalories(value: number): string {
 //
 //     /foods
 export default function FoodsScreen() {
-  const { date: requestedDate, returnTo } = useLocalSearchParams<{ date?: string; returnTo?: string }>();
-  const returnToMeals = () => router.replace({ pathname: '/add-meal', params: { ...(typeof requestedDate === 'string' ? { date: requestedDate } : {}), ...(returnTo === 'history' ? { returnTo: 'history' } : {}) } } as never);
+  const { date: requestedDate, returnTo, fromMeal, editMealId } = useLocalSearchParams<{ date?: string; returnTo?: string; fromMeal?: string; editMealId?: string }>();
+  const returnToMeals = () => {
+    if (fromMeal === '1') {
+      router.back();
+      return;
+    }
+    router.replace({ pathname: '/add-meal', params: { ...(typeof requestedDate === 'string' ? { date: requestedDate } : {}), ...(editMealId ? { editMealId } : {}), ...(returnTo === 'history' ? { returnTo: 'history' } : {}) } } as never);
+  };
 
   // ----------------------------------------------------------
   // DATABASE
@@ -1041,7 +1047,7 @@ export default function FoodsScreen() {
                   <Macro label="Fibre" value={`${item.fibre} g`} />
                 </View>
                 <View style={styles.foodActions}>
-                  <Pressable style={styles.foodAction} onPress={() => router.push({ pathname: '/food-edit', params: { foodId: item.id, date: requestedDate, returnTo } } as never)}><Ionicons name="create-outline" size={15} color="#374151" /><Text style={styles.foodActionText}>Edit</Text></Pressable>
+                  <Pressable style={styles.foodAction} onPress={() => router.push({ pathname: '/food-edit', params: { foodId: item.id, date: requestedDate, returnTo, fromMeal, editMealId } } as never)}><Ionicons name="create-outline" size={15} color="#374151" /><Text style={styles.foodActionText}>Edit</Text></Pressable>
                   <Pressable style={[styles.foodAction, styles.foodDeleteAction]} onPress={() => Alert.alert('Delete food', `Remove ${item.name} from your library? Existing meals will stay saved.`, [
                     { text: 'Cancel', style: 'cancel' },
                     { text: 'Delete', style: 'destructive', onPress: async () => { try { await deleteFood(db, item.id); await loadFoods(search); } catch (error) { console.error(error); Alert.alert('Could not delete food', 'Please try again.'); } } },
