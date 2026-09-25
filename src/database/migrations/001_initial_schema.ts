@@ -62,6 +62,7 @@ export async function migrateDatabase(db: SQLiteDatabase) {
 
       daily_log_id TEXT NOT NULL,
       meal_name TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
       notes TEXT,
       quick_calories REAL,
       quick_protein REAL,
@@ -177,6 +178,7 @@ export async function migrateDatabase(db: SQLiteDatabase) {
       workout_log_id TEXT NOT NULL,
 
       exercise_name TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
       sets INTEGER,
       reps INTEGER,
       weight REAL,
@@ -225,6 +227,7 @@ export async function migrateDatabase(db: SQLiteDatabase) {
       template_id TEXT NOT NULL,
 
       exercise_name TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
       sets INTEGER,
       reps INTEGER,
       weight REAL,
@@ -293,9 +296,20 @@ export async function migrateDatabase(db: SQLiteDatabase) {
     await db.execAsync('ALTER TABLE goals ADD COLUMN workout_target INTEGER');
   }
   const mealColumns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(meals)');
+  if (!mealColumns.some((column) => column.name === 'sort_order')) {
+    await db.execAsync('ALTER TABLE meals ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0');
+  }
   for (const column of ['quick_calories', 'quick_protein', 'quick_carbs', 'quick_fat', 'quick_fibre']) {
     if (!mealColumns.some((existing) => existing.name === column)) {
       await db.execAsync(`ALTER TABLE meals ADD COLUMN ${column} REAL`);
     }
+  }
+  const exerciseColumns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(exercises)');
+  if (!exerciseColumns.some((column) => column.name === 'sort_order')) {
+    await db.execAsync('ALTER TABLE exercises ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0');
+  }
+  const workoutTemplateExerciseColumns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(workout_template_exercises)');
+  if (!workoutTemplateExerciseColumns.some((column) => column.name === 'sort_order')) {
+    await db.execAsync('ALTER TABLE workout_template_exercises ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0');
   }
 }

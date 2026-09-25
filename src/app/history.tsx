@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
@@ -6,11 +6,13 @@ import { useSQLiteContext } from 'expo-sqlite';
 import { saveHistoricalMeasures } from '../repositories/historyRepository';
 import { getDailyLogByDate } from '../repositories/dailyLogRepository';
 import { getWeeklySummary } from '../services/analyticsService';
+import { getRangeAverage, type RangeAverage } from '../services/rangeAnalyticsService';
 import { getWeeklyTrackingGoals, saveWeeklyTrackingGoals, type WeeklyTrackingGoals } from '../repositories/weeklyTrackingGoalRepository';
 import { getTodayDate, isValidDateString, shiftDate } from '../utils/date';
 import { getSettings } from '../repositories/settingsRepository';
 import { weightFromStorage, weightToStorage, type WeightUnit } from '../utils/weight';
 import { useSelectedDate } from '../contexts/SelectedDateContext';
+import { DatePickerField } from '../components/ui/DatePickerField';
 
 function validDate(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -23,6 +25,13 @@ export default function HistoryScreen() {
   const db = useSQLiteContext();
   const { setSelectedDate } = useSelectedDate();
   const [weekEndDate, setWeekEndDate] = useState(getTodayDate());
+  const [rangeStartDate, setRangeStartDate] = useState(shiftDate(getTodayDate(), -6));
+  const [rangeEndDate, setRangeEndDate] = useState(getTodayDate());
+  const [rangeAverage, setRangeAverage] = useState<RangeAverage | null>(null);
+  const [rangeLoading, setRangeLoading] = useState(false);
+  const [rangeError, setRangeError] = useState('');
+  const [rangeOpen, setRangeOpen] = useState(false);
+  const rangeRequestRef = useRef(0);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState(getTodayDate().slice(0, 7));
   const [date, setDate] = useState(getTodayDate());
@@ -42,7 +51,11 @@ export default function HistoryScreen() {
   const summaryRequestRef = useRef(0);
   const [weightUnit, setWeightUnit] = useState<WeightUnit>('kg');
   const [weekly, setWeekly] = useState<Awaited<ReturnType<typeof getWeeklySummary>> | null>(null);
-  useEffect(() => { getSettings(db).then((settings) => setWeightUnit(settings.weightUnit)).catch((error) => console.error(error)); }, [db]);
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    getSettings(db).then((settings) => { if (active) setWeightUnit(settings.weightUnit); }).catch((error) => console.error(error));
+    return () => { active = false; };
+  }, [db]));
 
   const load = useCallback(async () => {
     const request = ++summaryRequestRef.current;
@@ -97,6 +110,39 @@ export default function HistoryScreen() {
   };
 
   const showToday = () => selectPeriodEnd(getTodayDate());
+
+  const calculateRangeAverage = async (start = rangeStartDate, end = rangeEndDate) => {
+    if (!validDate(start) || !validDate(end)) return setRangeError('Choose valid start and end dates.');
+    if (start > end) return setRangeError('Start date must be on or before the end date.');
+    if (end > getTodayDate()) return setRangeError('Choose today or an earlier end date.');
+    const request = ++rangeRequestRef.current;
+    try {
+      setRangeLoading(true);
+      setRangeError('');
+      const result = await getRangeAverage(db, start, end);
+      if (request === rangeRequestRef.current) setRangeAverage(result);
+    } catch (error) {
+      if (request === rangeRequestRef.current) setRangeError(error instanceof Error ? error.message : 'Could not calculate this date range.');
+    } finally {
+      if (request === rangeRequestRef.current) setRangeLoading(false);
+    }
+  };
+
+  const resetRangeResult = () => {
+    rangeRequestRef.current += 1;
+    setRangeAverage(null);
+    setRangeError('');
+    setRangeLoading(false);
+  };
+
+  const setRangePreset = (days: number | 'month') => {
+    const end = getTodayDate();
+    const start = days === 'month' ? `${end.slice(0, 7)}-01` : shiftDate(end, -(days - 1));
+    setRangeStartDate(start);
+    setRangeEndDate(end);
+    resetRangeResult();
+    void calculateRangeAverage(start, end);
+  };
 
   const chooseDay = (selectedDate: string) => {
     selectedDateRef.current = selectedDate;
@@ -188,12 +234,15 @@ export default function HistoryScreen() {
         </View>}
       </View>
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Nutrition per day</Text>
-        <View style={styles.macroGrid}>
-          <Macro label="Protein" value={weekly.averageMacros.protein} unit="g" color="#2563EB" />
-          <Macro label="Carbs" value={weekly.averageMacros.carbs} unit="g" color="#D97706" />
-          <Macro label="Fat" value={weekly.averageMacros.fat} unit="g" color="#DB5B69" />
-          <Macro label="Fibre" value={weekly.averageMacros.fibre} unit="g" color="#198754" />
+        <View style={styles.nutritionHeading}>
+          <View><Text style={styles.sectionTitle}>Nutrition per day</Text><Text style={styles.nutritionHint}>7-day average · grams</Text></View>
+          <View style={styles.nutritionIcon}><Ionicons name="nutrition-outline" size={16} color="#25634C" /></View>
+        </View>
+        <View style={styles.nutritionGrid}>
+          <NutritionMetric label="Protein" value={weekly.averageMacros.protein} color="#2563EB" />
+          <NutritionMetric label="Carbs" value={weekly.averageMacros.carbs} color="#D97706" />
+          <NutritionMetric label="Fat" value={weekly.averageMacros.fat} color="#DB5B69" />
+          <NutritionMetric label="Fibre" value={weekly.averageMacros.fibre} color="#198754" />
         </View>
       </View>
       <WeeklyBarChart title="Calories by day" unit="kcal" days={weekly.dailyCalories.map((day) => ({ date: day.date, value: day.calories }))} color="#E69843" />
@@ -226,6 +275,53 @@ export default function HistoryScreen() {
       <Pressable disabled={dateLoading} onPress={save} style={[styles.button, dateLoading && styles.disabled]}><Text style={styles.buttonText}>{dateLoading ? 'Loading day…' : 'Save day'}</Text></Pressable>
       <View style={styles.dayActions}><Pressable disabled={!isValidDateString(date) || date > getTodayDate()} onPress={() => router.push({ pathname: '/add-meal', params: { date, returnTo: 'history' } })} style={[styles.dayAction, (!isValidDateString(date) || date > getTodayDate()) && styles.disabled]}><Ionicons name="restaurant-outline" size={16} color="#25634C" /><Text style={styles.dayActionText}>Edit meals</Text></Pressable><Pressable disabled={!isValidDateString(date) || date > getTodayDate()} onPress={() => { setSelectedDate(date); router.push({ pathname: '/workouts', params: { returnTo: 'history' } }); }} style={[styles.dayAction, (!isValidDateString(date) || date > getTodayDate()) && styles.disabled]}><Ionicons name="barbell-outline" size={16} color="#25634C" /><Text style={styles.dayActionText}>Edit activity</Text></Pressable></View>
     </View>}
+    <View style={styles.customRangeCard}>
+      <Pressable accessibilityRole="button" accessibilityState={{ expanded: rangeOpen }} onPress={() => setRangeOpen((open) => !open)} style={styles.rangeSectionToggle}>
+        <View style={styles.rangeSectionIcon}><Ionicons name="options-outline" size={18} color="#25634C" /></View>
+        <View style={styles.rangeSectionCopy}>
+          <Text style={styles.sectionTitle}>Custom date-range averages</Text>
+          <Text style={styles.goalHint}>{rangeAverage ? `${formatDate(rangeAverage.startDate)} – ${formatDate(rangeAverage.endDate)} · ${rangeAverage.dayCount} days` : 'Choose dates for a detailed daily average'}</Text>
+        </View>
+        <Ionicons name={rangeOpen ? 'chevron-up' : 'chevron-down'} size={18} color="#6B7280" />
+      </Pressable>
+      {rangeOpen && <View style={styles.rangeSectionBody}>
+        <Text style={styles.rangeMethodHint}>Pick any past date range, or use a quick option below. The daily averages include all calendar days; weight uses days with a recorded weight.</Text>
+        <View style={styles.customRangeRow}>
+          <DatePickerField label="Start date" value={rangeStartDate} onChange={(value) => { setRangeStartDate(value); if (value > rangeEndDate) setRangeEndDate(value); resetRangeResult(); }} />
+          <DatePickerField label="End date" value={rangeEndDate} minimumDate={rangeStartDate} onChange={(value) => { setRangeEndDate(value); resetRangeResult(); }} />
+        </View>
+        <View style={styles.presetRow}>
+          <Preset label="Last 7 days" disabled={rangeLoading} onPress={() => setRangePreset(7)} />
+          <Preset label="Last 30 days" disabled={rangeLoading} onPress={() => setRangePreset(30)} />
+          <Preset label="This month" disabled={rangeLoading} onPress={() => setRangePreset('month')} />
+        </View>
+        <Pressable disabled={rangeLoading} onPress={() => void calculateRangeAverage()} style={[styles.button, rangeLoading && styles.disabled]}>
+          {rangeLoading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.buttonText}>Calculate averages</Text>}
+        </Pressable>
+        {!!rangeError && <Text accessibilityRole="alert" style={styles.rangeError}>{rangeError}</Text>}
+        {rangeAverage && <View style={styles.customRangeResults}>
+          <View style={styles.rangeResultHeader}>
+            <Ionicons name="calendar-outline" size={15} color="#25634C" />
+            <Text style={styles.customRangeLabel}>{formatDate(rangeAverage.startDate)} – {formatDate(rangeAverage.endDate)}</Text>
+            <Text style={styles.rangeDayCount}>{rangeAverage.dayCount} days</Text>
+          </View>
+          <Text style={styles.rangeGroupTitle}>Daily nutrition</Text>
+          <View style={styles.rangeMetricGrid}>
+            <RangeMetric label="Calories" value={rangeAverage.averageCalories} unit="kcal / day" color="#C66A16" />
+            <RangeMetric label="Protein" value={rangeAverage.averageProtein} unit="g / day" color="#2563EB" />
+            <RangeMetric label="Carbs" value={rangeAverage.averageCarbs} unit="g / day" color="#D97706" />
+            <RangeMetric label="Fat" value={rangeAverage.averageFat} unit="g / day" color="#DB5B69" />
+            <RangeMetric label="Fibre" value={rangeAverage.averageFibre} unit="g / day" color="#198754" />
+          </View>
+          <Text style={styles.rangeGroupTitle}>Activity & body</Text>
+          <View style={styles.rangeMetricGrid}>
+            <RangeMetric label="Steps" value={rangeAverage.averageSteps} unit="steps / day" color="#25634C" />
+            <RangeMetric label="Average weight" value={rangeAverage.averageWeight == null ? '—' : weightFromStorage(rangeAverage.averageWeight, weightUnit).toFixed(1)} unit={rangeAverage.averageWeight == null ? 'No entries' : weightUnit} color="#5358A6" />
+            <RangeMetric label="Workouts" value={rangeAverage.workoutCount} unit="total" color="#8155A5" />
+          </View>
+        </View>}
+      </View>}
+    </View>
   </ScrollView>
   </KeyboardAvoidingView>;
 }
@@ -238,8 +334,26 @@ function GoalInput({ label, value, onChangeText, unit, integer = false }: { labe
   return <View style={styles.goalInputWrap}><Text style={styles.goalInputLabel}>{label}</Text><View style={styles.goalInputRow}><TextInput value={value} onChangeText={onChangeText} keyboardType={integer ? 'number-pad' : 'decimal-pad'} placeholder="Not set" style={styles.goalInput} /><Text style={styles.goalInputUnit}>{unit}</Text></View></View>;
 }
 
-function Macro({ label, value, unit, color }: { label: string; value: number; unit: string; color: string }) {
-  return <View style={styles.macroItem}><View style={[styles.macroDot, { backgroundColor: color }]} /><Text style={styles.macroLabel}>{label}</Text><Text style={styles.macroValue}>{Math.round(value)} {unit}</Text></View>;
+function Preset({ label, onPress, disabled = false }: { label: string; onPress: () => void; disabled?: boolean }) {
+  return <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.preset, disabled && styles.disabled]}><Text style={styles.presetText}>{label}</Text></Pressable>;
+}
+
+function RangeMetric({ label, value, unit, color }: { label: string; value: number | string; unit: string; color: string }) {
+  return <View style={styles.rangeMetric}>
+    <View style={[styles.rangeMetricAccent, { backgroundColor: color }]} />
+    <View style={styles.rangeMetricCopy}>
+      <Text style={styles.rangeMetricLabel}>{label}</Text>
+      <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={styles.rangeMetricValue}>{typeof value === 'number' ? Math.round(value).toLocaleString() : value}</Text>
+      <Text style={styles.rangeMetricUnit}>{unit}</Text>
+    </View>
+  </View>;
+}
+
+function NutritionMetric({ label, value, color }: { label: string; value: number; color: string }) {
+  return <View style={styles.nutritionMetric}>
+    <View style={styles.nutritionMetricLabelRow}><View style={[styles.macroDot, { backgroundColor: color }]} /><Text style={styles.nutritionMetricLabel}>{label}</Text></View>
+    <Text style={styles.nutritionMetricValue}>{Math.round(value).toLocaleString()}<Text style={styles.nutritionMetricUnit}> g</Text></Text>
+  </View>;
 }
 
 function WeeklyBarChart({ title, unit, days, color }: { title: string; unit: string; days: { date: string; value: number }[]; color: string }) {
@@ -277,16 +391,18 @@ function formatDate(value: string) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#F7F8FA' }, scroll: { flex: 1 }, content: { padding: 18, paddingTop: 52, paddingBottom: 120 },
-  back: { color: '#25634C', fontWeight: '600', marginBottom: 14 }, title: { color: '#111827', fontSize: 28, fontWeight: '700' }, subtitle: { color: '#6B7280', marginTop: 4, marginBottom: 13, fontSize: 13 },
-  card: { backgroundColor: '#FFF', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 10 }, sectionTitle: { color: '#111827', fontSize: 15, fontWeight: '700' }, heading: { color: '#111827', fontSize: 17, fontWeight: '700', marginTop: 2, marginBottom: 8 },
+  screen: { flex: 1, backgroundColor: '#F7F8FA' }, scroll: { flex: 1 }, content: { padding: 14, paddingTop: 46, paddingBottom: 100 },
+  back: { color: '#25634C', fontWeight: '600', marginBottom: 11 }, title: { color: '#111827', fontSize: 25, fontWeight: '700' }, subtitle: { color: '#6B7280', marginTop: 3, marginBottom: 10, fontSize: 12 },
+  card: { backgroundColor: '#FFF', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 8 }, sectionTitle: { color: '#111827', fontSize: 14, fontWeight: '700' }, heading: { color: '#111827', fontSize: 16, fontWeight: '700', marginTop: 2, marginBottom: 6 },
   loadingCard: { minHeight: 110, alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#FFF', borderRadius: 14, borderWidth: 1, borderColor: '#E5E7EB' }, emptyCard: { backgroundColor: '#FFF', padding: 16, borderRadius: 14, borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 12 }, emptyTitle: { color: '#111827', fontWeight: '700', fontSize: 15, marginBottom: 4 }, retryButton: { alignSelf: 'flex-start', backgroundColor: '#EAF4EF', borderRadius: 8, marginTop: 12, paddingVertical: 8, paddingHorizontal: 12 }, retryText: { color: '#1D513D', fontWeight: '700' },
-  insightRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }, insightIcon: { height: 28, width: 28, borderRadius: 9, backgroundColor: '#EAF4EF', alignItems: 'center', justifyContent: 'center' }, insightText: { color: '#4B5563', fontSize: 12, fontWeight: '600' }, metricGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 9, marginBottom: 10 }, metricCard: { width: '48.5%', minHeight: 112, backgroundColor: '#FFF', borderRadius: 14, borderWidth: 1, borderColor: '#E5E7EB', padding: 12 }, metricIcon: { width: 30, height: 30, borderRadius: 9, justifyContent: 'center', alignItems: 'center', marginBottom: 7 }, metricLabel: { color: '#6B7280', fontSize: 11 }, metricValueRow: { flexDirection: 'row', alignItems: 'baseline', gap: 4, marginTop: 3 }, metricValue: { color: '#111827', fontSize: 20, fontWeight: '700' }, metricUnit: { color: '#6B7280', fontSize: 10 },
-  metricGoal: { color: '#8B929A', fontSize: 9, marginTop: 3 }, weekSwitcher: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }, weekArrow: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', backgroundColor: '#EAF4EF', borderRadius: 10 }, weekLabelWrap: { flex: 1, alignItems: 'center' }, weekDates: { color: '#111827', fontWeight: '700', fontSize: 14 }, weekCaption: { color: '#6B7280', fontSize: 10, marginTop: 2 }, thisWeekButton: { backgroundColor: '#FFF', borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 9, paddingHorizontal: 10, paddingVertical: 8 }, thisWeekText: { color: '#374151', fontWeight: '600', fontSize: 11 }, dateSelect: { backgroundColor: '#FFF', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12, padding: 11, marginBottom: 12 }, dateSelectLabel: { color: '#6B7280', fontSize: 10 }, dateButton: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 40 }, dateButtonIcon: { width: 34, height: 34, borderRadius: 10, backgroundColor: '#EAF4EF', alignItems: 'center', justifyContent: 'center' }, dateButtonCopy: { flex: 1 }, dateButtonValue: { color: '#111827', fontSize: 14, fontWeight: '700', marginTop: 2 }, calendar: { borderTopWidth: 1, borderColor: '#F1F3F5', marginTop: 10, paddingTop: 8 }, calendarHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }, monthArrow: { width: 32, height: 32, backgroundColor: '#F3F4F6', borderRadius: 9, alignItems: 'center', justifyContent: 'center' }, monthTitle: { color: '#111827', fontSize: 14, fontWeight: '700' }, calendarGrid: { flexDirection: 'row', flexWrap: 'wrap' }, weekdayLabel: { width: `${100 / 7}%`, textAlign: 'center', color: '#9CA3AF', fontSize: 10, fontWeight: '600', paddingVertical: 6 }, calendarCell: { width: `${100 / 7}%`, height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 10 }, calendarDayText: { color: '#374151', fontSize: 12 }, calendarSelected: { backgroundColor: '#25634C' }, calendarSelectedText: { color: '#FFF', fontWeight: '700' }, calendarDisabled: { opacity: 0.35 }, futureDayText: { color: '#9CA3AF' }, calendarHint: { color: '#9CA3AF', fontSize: 10, textAlign: 'center', marginTop: 7 },
+  insightRow: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 7 }, insightIcon: { height: 25, width: 25, borderRadius: 8, backgroundColor: '#EAF4EF', alignItems: 'center', justifyContent: 'center' }, insightText: { color: '#4B5563', fontSize: 11, fontWeight: '600' }, metricGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginBottom: 7 }, metricCard: { width: '48.5%', minHeight: 96, backgroundColor: '#FFF', borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', padding: 9 }, metricIcon: { width: 26, height: 26, borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginBottom: 4 }, metricLabel: { color: '#6B7280', fontSize: 10 }, metricValueRow: { flexDirection: 'row', alignItems: 'baseline', gap: 4, marginTop: 2 }, metricValue: { color: '#111827', fontSize: 18, fontWeight: '700' }, metricUnit: { color: '#6B7280', fontSize: 9 },
+  metricGoal: { color: '#8B929A', fontSize: 8, marginTop: 2 }, weekSwitcher: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }, weekArrow: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center', backgroundColor: '#EAF4EF', borderRadius: 9 }, weekLabelWrap: { flex: 1, alignItems: 'center' }, weekDates: { color: '#111827', fontWeight: '700', fontSize: 13 }, weekCaption: { color: '#6B7280', fontSize: 9, marginTop: 1 }, thisWeekButton: { backgroundColor: '#FFF', borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, paddingHorizontal: 9, paddingVertical: 6 }, thisWeekText: { color: '#374151', fontWeight: '600', fontSize: 10 }, dateSelect: { backgroundColor: '#FFF', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 11, padding: 9, marginBottom: 9 }, dateSelectLabel: { color: '#6B7280', fontSize: 9 }, dateButton: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 36 }, dateButtonIcon: { width: 30, height: 30, borderRadius: 9, backgroundColor: '#EAF4EF', alignItems: 'center', justifyContent: 'center' }, dateButtonCopy: { flex: 1 }, dateButtonValue: { color: '#111827', fontSize: 13, fontWeight: '700', marginTop: 1 }, calendar: { borderTopWidth: 1, borderColor: '#F1F3F5', marginTop: 8, paddingTop: 6 }, calendarHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }, monthArrow: { width: 30, height: 30, backgroundColor: '#F3F4F6', borderRadius: 8, alignItems: 'center', justifyContent: 'center' }, monthTitle: { color: '#111827', fontSize: 13, fontWeight: '700' }, calendarGrid: { flexDirection: 'row', flexWrap: 'wrap' }, weekdayLabel: { width: `${100 / 7}%`, textAlign: 'center', color: '#9CA3AF', fontSize: 9, fontWeight: '600', paddingVertical: 5 }, calendarCell: { width: `${100 / 7}%`, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 9 }, calendarDayText: { color: '#374151', fontSize: 11 }, calendarSelected: { backgroundColor: '#25634C' }, calendarSelectedText: { color: '#FFF', fontWeight: '700' }, calendarDisabled: { opacity: 0.35 }, futureDayText: { color: '#9CA3AF' }, calendarHint: { color: '#9CA3AF', fontSize: 9, textAlign: 'center', marginTop: 6 },
   sectionAction: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, goalHint: { color: '#6B7280', fontSize: 11, marginTop: 4 }, editText: { color: '#25634C', fontWeight: '700', fontSize: 12 }, goalForm: { borderTopWidth: 1, borderColor: '#F1F3F5', marginTop: 12, paddingTop: 3 }, goalInputWrap: { marginTop: 9 }, goalInputLabel: { color: '#4B5563', fontWeight: '600', fontSize: 12, marginBottom: 5 }, goalInputRow: { flexDirection: 'row', alignItems: 'center', gap: 9 }, goalInput: { flex: 1, backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 9, paddingHorizontal: 10, paddingVertical: 9, color: '#111827' }, goalInputUnit: { minWidth: 65, color: '#6B7280', fontSize: 11 },
-  macroGrid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 13, marginTop: 13 }, macroItem: { width: '50%', flexDirection: 'row', alignItems: 'center', gap: 6 }, macroDot: { width: 7, height: 7, borderRadius: 4 }, macroLabel: { color: '#6B7280', fontSize: 12, flex: 1 }, macroValue: { color: '#111827', fontSize: 12, fontWeight: '700' }, chartHeading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, chartUnit: { color: '#9CA3AF', fontSize: 11 }, weekChart: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 5, height: 112, marginTop: 9 }, dayColumn: { flex: 1, alignItems: 'center', justifyContent: 'flex-end', height: '100%' }, dayValue: { color: '#6B7280', fontSize: 9, marginBottom: 4 }, dayBarArea: { height: 66, width: '70%', minWidth: 17, justifyContent: 'flex-end', backgroundColor: '#F3F4F6', borderRadius: 5, overflow: 'hidden' }, dayBar: { width: '100%', borderRadius: 5 }, dayLabel: { color: '#9CA3AF', fontSize: 10, marginTop: 5 }, weightDays: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }, weightDay: { backgroundColor: '#F5F7F6', borderRadius: 9, paddingHorizontal: 9, paddingVertical: 7 }, weightDate: { color: '#6B7280', fontSize: 10 }, weightValue: { color: '#111827', fontSize: 12, fontWeight: '700', marginTop: 2 },
+  customRangeRow: { flexDirection: 'row', gap: 7, marginTop: 8 }, presetRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 7 }, preset: { backgroundColor: '#F0F7F3', borderRadius: 8, paddingHorizontal: 9, paddingVertical: 6 }, presetText: { color: '#1D513D', fontWeight: '600', fontSize: 10 }, customRangeResults: { borderTopWidth: 1, borderColor: '#F1F3F5', marginTop: 12, paddingTop: 11 }, rangeResultHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 11 }, customRangeLabel: { color: '#374151', fontSize: 11, fontWeight: '600', flex: 1 }, rangeDayCount: { color: '#25634C', backgroundColor: '#EAF4EF', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4, fontSize: 10, fontWeight: '700', overflow: 'hidden' }, rangeGroupTitle: { color: '#6B7280', fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 3, marginBottom: 6 }, rangeMetricGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginBottom: 10 }, rangeMetric: { width: '48.5%', minHeight: 70, flexDirection: 'row', backgroundColor: '#F8FAF9', borderRadius: 10, borderWidth: 1, borderColor: '#EDF0EE', overflow: 'hidden' }, rangeMetricAccent: { width: 3 }, rangeMetricCopy: { flex: 1, minWidth: 0, justifyContent: 'center', paddingHorizontal: 9, paddingVertical: 8 }, rangeMetricLabel: { color: '#6B7280', fontSize: 10, fontWeight: '500' }, rangeMetricValue: { color: '#111827', fontSize: 17, fontWeight: '700', marginTop: 2 }, rangeMetricUnit: { color: '#9CA3AF', fontSize: 9, marginTop: 1 }, rangeError: { color: '#B42318', fontSize: 10, lineHeight: 14, marginTop: 6 },
+  customRangeCard: { backgroundColor: '#FFF', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: '#E5E7EB', marginTop: 2, marginBottom: 10 }, rangeSectionToggle: { minHeight: 42, flexDirection: 'row', alignItems: 'center', gap: 9 }, rangeSectionIcon: { width: 32, height: 32, borderRadius: 9, backgroundColor: '#EAF4EF', alignItems: 'center', justifyContent: 'center' }, rangeSectionCopy: { flex: 1 }, rangeSectionBody: { borderTopWidth: 1, borderColor: '#F1F3F5', marginTop: 9, paddingTop: 8 }, rangeMethodHint: { color: '#6B7280', fontSize: 10, lineHeight: 14 },
+  macroDot: { width: 6, height: 6, borderRadius: 3 }, nutritionHeading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, nutritionHint: { color: '#9CA3AF', fontSize: 9, marginTop: 2 }, nutritionIcon: { width: 28, height: 28, borderRadius: 8, backgroundColor: '#EAF4EF', alignItems: 'center', justifyContent: 'center' }, nutritionGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 9 }, nutritionMetric: { width: '48.5%', minHeight: 53, justifyContent: 'center', backgroundColor: '#F8FAF9', borderWidth: 1, borderColor: '#EDF0EE', borderRadius: 9, paddingHorizontal: 9, paddingVertical: 6 }, nutritionMetricLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 5 }, nutritionMetricLabel: { color: '#6B7280', fontSize: 10, fontWeight: '500' }, nutritionMetricValue: { color: '#111827', fontSize: 15, lineHeight: 18, fontWeight: '700', marginTop: 2 }, nutritionMetricUnit: { color: '#9CA3AF', fontSize: 9, fontWeight: '500' }, chartHeading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, chartUnit: { color: '#9CA3AF', fontSize: 10 }, weekChart: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 4, height: 94, marginTop: 7 }, dayColumn: { flex: 1, alignItems: 'center', justifyContent: 'flex-end', height: '100%' }, dayValue: { color: '#6B7280', fontSize: 8, marginBottom: 3 }, dayBarArea: { height: 54, width: '70%', minWidth: 15, justifyContent: 'flex-end', backgroundColor: '#F3F4F6', borderRadius: 5, overflow: 'hidden' }, dayBar: { width: '100%', borderRadius: 5 }, dayLabel: { color: '#9CA3AF', fontSize: 9, marginTop: 4 }, weightDays: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }, weightDay: { backgroundColor: '#F5F7F6', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 6 }, weightDate: { color: '#6B7280', fontSize: 9 }, weightValue: { color: '#111827', fontSize: 11, fontWeight: '700', marginTop: 1 },
   editorToggle: { backgroundColor: '#FFF', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 13, minHeight: 62, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 2, marginBottom: 10 }, editorIcon: { width: 34, height: 34, borderRadius: 10, backgroundColor: '#EAF4EF', alignItems: 'center', justifyContent: 'center' }, editorCopy: { flex: 1 }, editorTitle: { color: '#111827', fontWeight: '700', fontSize: 13 }, editorHint: { color: '#6B7280', fontSize: 11, marginTop: 2 },
-  dayRow: { flexDirection: 'row', alignItems: 'center', gap: 5, borderTopWidth: 1, borderColor: '#F1F3F5', minHeight: 57, paddingVertical: 7, paddingHorizontal: 3 }, dayRowSelected: { backgroundColor: '#F1F8F4' }, dayDateWrap: { flex: 1, minWidth: 75 }, dayRowTitle: { color: '#111827', fontWeight: '600', fontSize: 11 }, dayRowSub: { color: '#9CA3AF', fontSize: 9, marginTop: 3 }, dayStat: { minWidth: 40, alignItems: 'flex-end' }, dayStatValue: { color: '#374151', fontWeight: '600', fontSize: 10 }, dayStatLabel: { color: '#9CA3AF', fontSize: 9, marginTop: 2 }, dayActions: { flexDirection: 'row', gap: 8, marginTop: 10 }, dayAction: { flex: 1, height: 40, backgroundColor: '#EAF4EF', borderRadius: 9, flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center' }, dayActionText: { color: '#1D513D', fontWeight: '600', fontSize: 11 },
+  dayRow: { flexDirection: 'row', alignItems: 'center', gap: 4, borderTopWidth: 1, borderColor: '#F1F3F5', minHeight: 49, paddingVertical: 5, paddingHorizontal: 2 }, dayRowSelected: { backgroundColor: '#F1F8F4' }, dayDateWrap: { flex: 1, minWidth: 72 }, dayRowTitle: { color: '#111827', fontWeight: '600', fontSize: 10 }, dayRowSub: { color: '#9CA3AF', fontSize: 8, marginTop: 2 }, dayStat: { minWidth: 36, alignItems: 'flex-end' }, dayStatValue: { color: '#374151', fontWeight: '600', fontSize: 9 }, dayStatLabel: { color: '#9CA3AF', fontSize: 8, marginTop: 1 }, dayActions: { flexDirection: 'row', gap: 7, marginTop: 8 }, dayAction: { flex: 1, height: 36, backgroundColor: '#EAF4EF', borderRadius: 8, flexDirection: 'row', gap: 5, alignItems: 'center', justifyContent: 'center' }, dayActionText: { color: '#1D513D', fontWeight: '600', fontSize: 10 },
   label: { color: '#4B5563', marginTop: 8, marginBottom: 5, fontSize: 13 }, input: { backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 9, padding: 11, color: '#111827' },
   dateRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }, dateArrow: { height: 38, width: 32, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F3F4F6', borderRadius: 9 }, dateArrowText: { color: '#374151', fontSize: 23 }, dateField: { flex: 1, minWidth: 0 }, datePretty: { color: '#111827', fontSize: 14, fontWeight: '600' }, dateInput: { color: '#6B7280', fontSize: 11, paddingVertical: 2, marginTop: 1 }, todayButton: { backgroundColor: '#EAF4EF', borderRadius: 9, paddingHorizontal: 9, paddingVertical: 10 }, todayText: { color: '#1D513D', fontWeight: '700', fontSize: 12 }, disabled: { opacity: 0.6 },
   button: { backgroundColor: '#25634C', borderRadius: 9, padding: 12, alignItems: 'center', marginTop: 12 }, buttonText: { color: '#FFF', fontWeight: '700' }, muted: { color: '#6B7280', fontSize: 12 },

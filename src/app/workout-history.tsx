@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -18,9 +18,13 @@ export default function WorkoutHistoryScreen() {
     (result[workout.date] ??= []).push(workout);
     return result;
   }, {});
-  useEffect(() => { getSettings(db).then((settings) => setWeightUnit(settings.weightUnit)).catch((error) => console.error(error)); }, [db]);
   const load = useCallback(async () => { try { setRows(await getRecentWorkoutHistory(db)); } catch (error) { console.error(error); Alert.alert('Could not load workout history', 'Check your device storage, then try again.'); } finally { setLoading(false); } }, [db]);
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    getSettings(db).then((settings) => { if (active) setWeightUnit(settings.weightUnit); }).catch((error) => console.error(error));
+    load();
+    return () => { active = false; };
+  }, [db, load]));
   return <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
     <Pressable accessibilityRole="button" onPress={() => router.replace('/explore')}><Text style={styles.back}>← More</Text></Pressable>
     <Text style={styles.title}>Workout history</Text><Text style={styles.subtitle}>{rows.length ? `${rows.length} recent sessions · tap a session for details` : 'Your saved sessions appear here.'}</Text>

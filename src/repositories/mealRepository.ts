@@ -66,6 +66,10 @@ export async function createMeal(
 ): Promise<Meal> {
   const id = generateId();
   const now = new Date().toISOString();
+  const nextOrder = await db.getFirstAsync<{ next_order: number }>(
+    'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM meals WHERE daily_log_id = ? AND deleted_at IS NULL',
+    dailyLogId
+  );
 
   await db.runAsync(
     `
@@ -74,6 +78,7 @@ export async function createMeal(
         user_id,
         daily_log_id,
         meal_name,
+        sort_order,
         notes,
         quick_calories,
         quick_protein,
@@ -85,12 +90,13 @@ export async function createMeal(
         deleted_at,
         sync_status
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     id,
     null,
     dailyLogId,
     mealName,
+    nextOrder?.next_order ?? 0,
     null,
     quickMacros?.calories ?? null,
     quickMacros?.protein ?? null,
@@ -119,6 +125,33 @@ export async function createMeal(
   return mapMeal(row);
 }
 
+export async function moveMeal(db: SQLiteDatabase, mealId: string, direction: 'up' | 'down'): Promise<void> {
+  await db.withTransactionAsync(async () => {
+    const meal = await db.getFirstAsync<{ daily_log_id: string }>(
+      'SELECT daily_log_id FROM meals WHERE id = ? AND deleted_at IS NULL', mealId
+    );
+    if (!meal) return;
+
+    const rows = await db.getAllAsync<{ id: string }>(
+      'SELECT id FROM meals WHERE daily_log_id = ? AND deleted_at IS NULL ORDER BY sort_order ASC, created_at ASC',
+      meal.daily_log_id
+    );
+    const index = rows.findIndex((row) => row.id === mealId);
+    const target = index + (direction === 'up' ? -1 : 1);
+    if (index < 0 || target < 0 || target >= rows.length) return;
+
+    const reordered = [...rows];
+    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+    const now = new Date().toISOString();
+    for (let order = 0; order < reordered.length; order += 1) {
+      await db.runAsync(
+        "UPDATE meals SET sort_order = ?, updated_at = ?, sync_status = 'local' WHERE id = ?",
+        order, now, reordered[order].id
+      );
+    }
+  });
+}
+
 export async function getMealsForDate(
   db: SQLiteDatabase,
   date: string
@@ -132,7 +165,7 @@ export async function getMealsForDate(
       WHERE d.date = ?
         AND d.deleted_at IS NULL
         AND m.deleted_at IS NULL
-      ORDER BY m.created_at ASC
+      ORDER BY m.sort_order ASC, m.created_at ASC
     `,
     date
   );

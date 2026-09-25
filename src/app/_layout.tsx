@@ -93,8 +93,11 @@ function AppTabs() {
       <Tabs.Screen name="templates" options={{ href: null }} />
       <Tabs.Screen name="settings" options={{ href: null }} />
       <Tabs.Screen name="backup" options={{ href: null }} />
+      <Tabs.Screen name="export" options={{ href: null }} />
+      <Tabs.Screen name="weekly-breakdown" options={{ href: null }} />
       <Tabs.Screen name="food-edit" options={{ href: null }} />
       <Tabs.Screen name="exercise-library" options={{ href: null }} />
+      <Tabs.Screen name="clear-data" options={{ href: null }} />
     </Tabs>
     </SelectedDateProvider>
   );

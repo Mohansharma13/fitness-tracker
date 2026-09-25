@@ -4,7 +4,7 @@ An Android-first, offline fitness and food tracker. Your logs are stored locally
 
 ## Download the APK
 
-[**Download Fitness Tracker for Android**](https://drive.google.com/file/d/1WVCJsYhYq0yCTLPpsU9cSCkiGT5CP-V7/view?usp=drive_link)
+[**Download Fitness Tracker for Android**](https://drive.google.com/file/d/1_a45TPc0AKzBGteoa3txvAPT_V9dQes2/view?usp=sharing)
 
 The APK is hosted on Google Drive. If Google Drive asks for access, the file owner needs to set General access to **Anyone with the link**. The download link will keep working when the APK is replaced in the same Drive file.
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -16,7 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 
-import { createExerciseLog, createWorkoutLog, deleteExerciseLog, deleteWorkoutLog, getWorkoutsForDate } from '../repositories/workoutRepository';
+import { createExerciseLog, createWorkoutLog, deleteExerciseLog, deleteWorkoutLog, getWorkoutsForDate, moveExerciseInWorkout } from '../repositories/workoutRepository';
 import { getSettings } from '../repositories/settingsRepository';
 import type { WorkoutLog } from '../types/workout';
 import { useSelectedDate } from '../contexts/SelectedDateContext';
@@ -82,16 +82,12 @@ export default function WorkoutsScreen() {
     router.replace(returnTo === 'history' ? '/history' : '/');
   };
 
-  useEffect(() => {
-    getSettings(db).then((settings) => setWeightUnit(settings.weightUnit)).catch((error) => console.error('Failed to load settings:', error));
-  }, [db]);
-
-  const loadWorkouts = useCallback(async () => {
+  const loadWorkouts = useCallback(async (showLoading = true) => {
     const request = ++requestId.current;
     const runLoad = async () => {
       if (request !== requestId.current) return;
       try {
-        setLoading(true);
+        if (showLoading) setLoading(true);
         setLoadError(false);
         const result = await getWorkoutsForDate(db, selectedDate);
         const templates = await getWorkoutTemplates(db);
@@ -112,9 +108,11 @@ export default function WorkoutsScreen() {
   }, [db, selectedDate]);
 
   useFocusEffect(useCallback(() => {
+    let active = true;
+    getSettings(db).then((settings) => { if (active) setWeightUnit(settings.weightUnit); }).catch((error) => console.error('Failed to load settings:', error));
     void loadWorkouts();
-    return () => { requestId.current += 1; };
-  }, [loadWorkouts]));
+    return () => { active = false; requestId.current += 1; };
+  }, [db, loadWorkouts]));
 
   const saveWorkout = async () => {
     const trimmedName = workoutName.trim();
@@ -130,12 +128,12 @@ export default function WorkoutsScreen() {
 
     try {
       setSaving(true);
-      await createWorkoutLog(db, { date: selectedDate, workoutType: trimmedName, duration: parsedDuration, notes: notes.trim() || null });
+      const createdWorkout = await createWorkoutLog(db, { date: selectedDate, workoutType: trimmedName, duration: parsedDuration, notes: notes.trim() || null });
+      setWorkouts((current) => [createdWorkout, ...current]);
       setWorkoutName('');
       setDuration('');
       setNotes('');
       setNotesExpanded(false);
-      await loadWorkouts();
       Alert.alert('Workout saved', `Recorded for ${displayDate(selectedDate)}. Add exercises, then save it as a routine if you want to reuse it on other dates.`);
     } catch (error) {
       console.error('Failed to save workout:', error);
@@ -155,7 +153,7 @@ export default function WorkoutsScreen() {
           await deleteWorkoutLog(db, workout.id);
           setDetailsWorkoutId(null);
           setExerciseFormWorkoutId(null);
-          await loadWorkouts();
+          setWorkouts((current) => current.filter((item) => item.id !== workout.id));
         } catch (error) {
           console.error('Failed to delete workout:', error);
           Alert.alert('Could not delete workout', 'Please try again.');
@@ -186,13 +184,15 @@ export default function WorkoutsScreen() {
 
     try {
       setSavingExercise(true);
-      await createExerciseLog(db, { workoutLogId: workoutId, exerciseName: trimmedName, sets, reps, weight: storedWeight });
+      const createdExercise = await createExerciseLog(db, { workoutLogId: workoutId, exerciseName: trimmedName, sets, reps, weight: storedWeight });
+      setWorkouts((current) => current.map((workout) => workout.id === workoutId
+        ? { ...workout, exercises: [...workout.exercises, createdExercise] }
+        : workout));
       setExerciseName('');
       setExerciseSets('');
       setExerciseReps('');
       setExerciseWeight('');
       setExerciseFormWorkoutId(null);
-      await loadWorkouts();
     } catch (error) {
       console.error('Failed to save exercise:', error);
       Alert.alert('Could not save exercise', 'Please try again.');
@@ -208,7 +208,7 @@ export default function WorkoutsScreen() {
     }
     try {
       await createWorkoutTemplateFromWorkout(db, workout, workout.workoutType);
-      await loadWorkouts();
+      await loadWorkouts(false);
       Alert.alert('Routine saved', `${workout.workoutType} is now available for any date in Saved routines.`);
     } catch (error) {
       console.error('Failed to save workout template:', error);
@@ -223,7 +223,7 @@ export default function WorkoutsScreen() {
     }
     try {
       await applyWorkoutTemplate(db, template.id, selectedDate);
-      await loadWorkouts();
+      await loadWorkouts(false);
       Alert.alert('Workout added', `${template.name} was added to ${selectedDate}.`);
     } catch (error) {
       console.error('Failed to start workout template:', error);
@@ -239,7 +239,10 @@ export default function WorkoutsScreen() {
       { text: 'Remove', style: 'destructive', onPress: async () => {
         try {
           await deleteExerciseLog(db, exerciseId);
-          await loadWorkouts();
+          setWorkouts((current) => current.map((workout) => ({
+            ...workout,
+            exercises: workout.exercises.filter((exercise) => exercise.id !== exerciseId),
+          })));
         } catch (error) {
           console.error('Failed to delete exercise:', error);
           Alert.alert('Could not remove exercise', 'Please try again.');
@@ -247,6 +250,24 @@ export default function WorkoutsScreen() {
       } },
     ]
   );
+
+  const reorderExercise = async (workoutId: string, exerciseId: string, direction: 'up' | 'down') => {
+    try {
+      await moveExerciseInWorkout(db, exerciseId, direction);
+      setWorkouts((current) => current.map((workout) => {
+        if (workout.id !== workoutId) return workout;
+        const exercises = [...workout.exercises];
+        const index = exercises.findIndex((exercise) => exercise.id === exerciseId);
+        const target = index + (direction === 'up' ? -1 : 1);
+        if (index < 0 || target < 0 || target >= exercises.length) return workout;
+        [exercises[index], exercises[target]] = [exercises[target], exercises[index]];
+        return { ...workout, exercises };
+      }));
+    } catch (error) {
+      console.error('Could not reorder exercise:', error);
+      Alert.alert('Could not reorder exercise', 'Please try again.');
+    }
+  };
 
   return (
     <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -320,7 +341,7 @@ export default function WorkoutsScreen() {
         </View>
 
         {loading ? <ActivityIndicator style={styles.loader} /> : loadError ? (
-          <View style={styles.emptyCard}><Text style={styles.emptyTitle}>Could not load workouts</Text><Pressable onPress={loadWorkouts} style={styles.retryButton}><Text style={styles.retryText}>Try again</Text></Pressable></View>
+          <View style={styles.emptyCard}><Text style={styles.emptyTitle}>Could not load workouts</Text><Pressable onPress={() => { void loadWorkouts(); }} style={styles.retryButton}><Text style={styles.retryText}>Try again</Text></Pressable></View>
         ) : workouts.length === 0 ? (
           <View style={styles.emptyCard}><Ionicons name="barbell-outline" size={25} color="#9CA3AF" /><Text style={styles.emptyTitle}>No workouts yet</Text><Text style={styles.bodyText}>Your workouts for this day will appear here.</Text></View>
         ) : workouts.map((workout) => {
@@ -342,10 +363,14 @@ export default function WorkoutsScreen() {
 
             {expanded && <View style={styles.workoutDetails}>
               {!!workout.notes && <Text style={styles.noteText}>{workout.notes}</Text>}
-              {workout.exercises.map((exercise) => <View key={exercise.id} style={styles.exerciseRow}>
+              {workout.exercises.map((exercise, index) => <View key={exercise.id} style={styles.exerciseRow}>
                 <View style={styles.exerciseInfo}>
                   <Text style={styles.exerciseName}>{exercise.exerciseName}</Text>
                   <Text style={styles.bodyText}>{exercise.sets} sets × {exercise.reps} reps{exercise.weight == null ? '' : ` · ${weightFromStorage(exercise.weight, weightUnit).toFixed(1)} ${weightUnit}`}</Text>
+                </View>
+                <View style={styles.exerciseOrderActions}>
+                  <Pressable accessibilityRole="button" accessibilityLabel={`Move ${exercise.exerciseName} earlier`} disabled={index === 0} onPress={() => { void reorderExercise(workout.id, exercise.id, 'up'); }} style={styles.exerciseOrderButton}><Ionicons name="chevron-up" size={17} color={index === 0 ? '#C4C9D0' : '#4B5563'} /></Pressable>
+                  <Pressable accessibilityRole="button" accessibilityLabel={`Move ${exercise.exerciseName} later`} disabled={index === workout.exercises.length - 1} onPress={() => { void reorderExercise(workout.id, exercise.id, 'down'); }} style={styles.exerciseOrderButton}><Ionicons name="chevron-down" size={17} color={index === workout.exercises.length - 1 ? '#C4C9D0' : '#4B5563'} /></Pressable>
                 </View>
                 <Pressable onPress={() => confirmDeleteExercise(exercise.id, exercise.exerciseName)} style={styles.removeExerciseButton} accessibilityLabel={`Remove ${exercise.exerciseName}`}><Ionicons name="close" size={18} color="#6B7280" /></Pressable>
               </View>)}
@@ -359,11 +384,27 @@ export default function WorkoutsScreen() {
               </View>
 
               {exerciseFormWorkoutId === workout.id && <View style={styles.exerciseForm}>
-                <TextInput value={exerciseName} onChangeText={setExerciseName} placeholder="Exercise name" style={styles.input} />
+                <View style={styles.exerciseFormHeading}>
+                  <Text style={styles.exerciseFormTitle}>Add an exercise</Text>
+                  <Text style={styles.exerciseFormHint}>Sets and reps are required. Weight is optional.</Text>
+                </View>
+                <View style={styles.exerciseField}>
+                  <Text style={styles.exerciseFieldLabel}>Exercise</Text>
+                  <TextInput value={exerciseName} onChangeText={setExerciseName} placeholder="e.g. Squat" accessibilityLabel="Exercise name" returnKeyType="next" style={styles.exerciseInput} />
+                </View>
                 <View style={styles.exerciseNumbers}>
-                  <TextInput value={exerciseSets} onChangeText={setExerciseSets} placeholder="Sets" keyboardType="number-pad" style={[styles.input, styles.numberInput]} />
-                  <TextInput value={exerciseReps} onChangeText={setExerciseReps} placeholder="Reps" keyboardType="number-pad" style={[styles.input, styles.numberInput]} />
-                  <TextInput value={exerciseWeight} onChangeText={setExerciseWeight} placeholder={`Weight (${weightUnit})`} keyboardType="decimal-pad" style={[styles.input, styles.numberInput]} />
+                  <View style={styles.exerciseNumberField}>
+                    <Text style={styles.exerciseFieldLabel}>Sets</Text>
+                    <TextInput value={exerciseSets} onChangeText={setExerciseSets} placeholder="e.g. 3" accessibilityLabel="Number of sets" keyboardType="number-pad" returnKeyType="next" style={[styles.exerciseInput, styles.numberInput]} />
+                  </View>
+                  <View style={styles.exerciseNumberField}>
+                    <Text style={styles.exerciseFieldLabel}>Reps / set</Text>
+                    <TextInput value={exerciseReps} onChangeText={setExerciseReps} placeholder="e.g. 8" accessibilityLabel="Reps per set" keyboardType="number-pad" returnKeyType="next" style={[styles.exerciseInput, styles.numberInput]} />
+                  </View>
+                  <View style={styles.exerciseNumberField}>
+                    <Text style={styles.exerciseFieldLabel}>Weight ({weightUnit})</Text>
+                    <TextInput value={exerciseWeight} onChangeText={setExerciseWeight} placeholder="Optional" accessibilityLabel={`Weight in ${weightUnit}, optional`} keyboardType="decimal-pad" returnKeyType="done" style={[styles.exerciseInput, styles.numberInput]} />
+                  </View>
                 </View>
                 <Pressable style={[styles.saveExerciseButton, savingExercise && styles.disabled]} onPress={() => saveExercise(workout.id)} disabled={savingExercise}><Text style={styles.saveExerciseText}>{savingExercise ? 'Saving…' : 'Save exercise'}</Text></Pressable>
               </View>}
@@ -478,15 +519,24 @@ const styles = StyleSheet.create({
   exerciseRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
   exerciseInfo: { flex: 1 },
   exerciseName: { color: '#374151', fontWeight: '600', fontSize: 12, marginBottom: 2 },
+  exerciseOrderActions: { alignItems: 'center', marginLeft: 5 },
+  exerciseOrderButton: { width: 30, height: 24, alignItems: 'center', justifyContent: 'center' },
   removeExerciseButton: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
   detailActions: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, marginTop: 9 },
   secondaryAction: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, paddingHorizontal: 11, paddingVertical: 8 },
   secondaryActionText: { color: '#374151', fontSize: 11, fontWeight: '600' },
   deleteAction: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 8 },
   deleteActionText: { color: '#B42318', fontSize: 11, fontWeight: '600' },
-  exerciseForm: { gap: 8, marginTop: 10, backgroundColor: '#F9FAFB', borderRadius: 10, padding: 10 },
-  exerciseNumbers: { flexDirection: 'row', gap: 7 },
-  numberInput: { flex: 1, minWidth: 0, paddingHorizontal: 7, fontSize: 12 },
+  exerciseForm: { gap: 10, marginTop: 10, backgroundColor: '#F9FAFB', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#E5E7EB' },
+  exerciseFormHeading: { marginBottom: 1 },
+  exerciseFormTitle: { color: '#111827', fontSize: 14, fontWeight: '700' },
+  exerciseFormHint: { color: '#6B7280', fontSize: 11, lineHeight: 16, marginTop: 3 },
+  exerciseField: { gap: 5 },
+  exerciseFieldLabel: { color: '#4B5563', fontSize: 11, fontWeight: '700' },
+  exerciseInput: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 9, color: '#111827', fontSize: 13 },
+  exerciseNumbers: { flexDirection: 'row', gap: 8 },
+  exerciseNumberField: { flex: 1, minWidth: 0, gap: 5 },
+  numberInput: { minWidth: 0, paddingHorizontal: 7, fontSize: 12 },
   saveExerciseButton: { alignItems: 'center', backgroundColor: '#374151', borderRadius: 8, paddingVertical: 10 },
   saveExerciseText: { color: '#FFFFFF', fontWeight: '700', fontSize: 12 },
   calendarBackdrop: { flex: 1, justifyContent: 'center', padding: 20, backgroundColor: 'rgba(17, 24, 39, 0.45)' },

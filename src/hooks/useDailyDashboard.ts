@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSQLiteContext } from 'expo-sqlite';
 
 import { getDailyDashboard } from '../services/analyticsService';
+import { getMealsForDate } from '../repositories/mealRepository';
 import { getTodayDate } from '../utils/date';
 
 export function useDailyDashboard(
@@ -41,6 +42,11 @@ export function useDailyDashboard(
     }
   }, [db, date]);
 
+  const reloadMeals = useCallback(async () => {
+    const meals = await getMealsForDate(db, date);
+    setDashboard((current) => current ? { ...current, meals, mealCount: meals.length } : current);
+  }, [db, date]);
+
   useEffect(() => () => { requestId.current += 1; }, []);
 
   return {
@@ -48,5 +54,6 @@ export function useDailyDashboard(
     loading,
     error,
     reload: loadDashboard,
+    reloadMeals,
   };
 }

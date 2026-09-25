@@ -98,7 +98,7 @@ import { useSQLiteContext } from 'expo-sqlite';
 //
 import { useDailyDashboard } from '../hooks/useDailyDashboard';
 import { calculateMealMacros } from '../services/macroService';
-import { deleteMeal } from '../repositories/mealRepository';
+import { deleteMeal, moveMeal } from '../repositories/mealRepository';
 import { getOrCreateDailyLog, updateDailyLog } from '../repositories/dailyLogRepository';
 import { getTodayDate, shiftDate } from '../utils/date';
 import { getWeeklySummary } from '../services/analyticsService';
@@ -183,6 +183,7 @@ export default function DashboardScreen() {
     loading,
     error: dashboardError,
     reload,
+    reloadMeals,
   } = useDailyDashboard(selectedDate);
 
   const [weightInput, setWeightInput] = useState('');
@@ -193,10 +194,6 @@ export default function DashboardScreen() {
   const [savingActivity, setSavingActivity] = useState(false);
   const [weightUnit, setWeightUnit] = useState<WeightUnit>('kg');
   const [profileName, setProfileName] = useState('');
-
-  useEffect(() => {
-    getSettings(db).then((settings) => { setWeightUnit(settings.weightUnit); setProfileName(settings.name); }).catch((error) => console.error('Failed to load settings:', error));
-  }, [db]);
 
   useEffect(() => {
     if (!dashboard || dashboard.date !== selectedDate) return;
@@ -237,8 +234,13 @@ export default function DashboardScreen() {
   //
   useFocusEffect(
     useCallback(() => {
+      let active = true;
+      getSettings(db).then((settings) => {
+        if (active) { setWeightUnit(settings.weightUnit); setProfileName(settings.name); }
+      }).catch((error) => console.error('Failed to load settings:', error));
       reload();
-    }, [reload])
+      return () => { active = false; };
+    }, [db, reload])
   );
 
 
@@ -643,6 +645,18 @@ export default function DashboardScreen() {
 
                 {expandedMealId === meal.id && <>
 
+                <View style={styles.reorderRow}>
+                  <Text style={styles.reorderLabel}>Meal order</Text>
+                  <View style={styles.reorderActions}>
+                    <Pressable accessibilityRole="button" accessibilityLabel={`Move ${meal.mealName} earlier`} disabled={meals[0]?.id === meal.id} style={[styles.reorderButton, meals[0]?.id === meal.id && styles.reorderButtonDisabled]} onPress={async () => { try { await moveMeal(db, meal.id, 'up'); await reloadMeals(); } catch (error) { console.error('Could not reorder meal:', error); Alert.alert('Could not reorder meal', 'Please try again.'); } }}>
+                      <Ionicons name="arrow-up" size={16} color={meals[0]?.id === meal.id ? '#9CA3AF' : '#374151'} /><Text style={styles.reorderButtonText}>Earlier</Text>
+                    </Pressable>
+                    <Pressable accessibilityRole="button" accessibilityLabel={`Move ${meal.mealName} later`} disabled={meals[meals.length - 1]?.id === meal.id} style={[styles.reorderButton, meals[meals.length - 1]?.id === meal.id && styles.reorderButtonDisabled]} onPress={async () => { try { await moveMeal(db, meal.id, 'down'); await reloadMeals(); } catch (error) { console.error('Could not reorder meal:', error); Alert.alert('Could not reorder meal', 'Please try again.'); } }}>
+                      <Ionicons name="arrow-down" size={16} color={meals[meals.length - 1]?.id === meal.id ? '#9CA3AF' : '#374151'} /><Text style={styles.reorderButtonText}>Later</Text>
+                    </Pressable>
+                  </View>
+                </View>
+
                 {/* ============================================
                     Foods inside this meal
                     ============================================ */}
@@ -969,6 +983,12 @@ const styles = StyleSheet.create({
   workoutLinkText: { color: '#374151', fontSize: 12, fontWeight: '600' },
   mealsHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6 },
   mealActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  reorderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, borderTopWidth: 1, borderTopColor: '#F3F4F6' },
+  reorderLabel: { color: '#6B7280', fontSize: 12, fontWeight: '600' },
+  reorderActions: { flexDirection: 'row', gap: 8 },
+  reorderButton: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8, backgroundColor: '#F3F4F6' },
+  reorderButtonDisabled: { opacity: 0.55 },
+  reorderButtonText: { color: '#374151', fontSize: 12, fontWeight: '600' },
   quickMealButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 9, paddingHorizontal: 8, paddingVertical: 8, marginBottom: 10 },
   quickMealText: { color: '#374151', fontSize: 11, fontWeight: '700' },
   addMealButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3, backgroundColor: '#111827', borderRadius: 9, paddingHorizontal: 11, paddingVertical: 8, marginBottom: 10 },

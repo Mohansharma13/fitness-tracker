@@ -1,50 +1,29 @@
 import { Ionicons } from '@expo/vector-icons';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
-import { useState } from 'react';
-import * as Sharing from 'expo-sharing';
-import { useSQLiteContext } from 'expo-sqlite';
-import { createCsvExportFile } from '../services/csvExportService';
 
 const sections = [
   { title: 'Tracking', items: [
-    { title: 'Weekly tracking averages', detail: 'Calories, macros, weight, and steps', icon: 'stats-chart-outline' as const, route: '/history' },
+    { title: 'Tracking averages', detail: 'View nutrition, steps, weight, and workout averages', icon: 'stats-chart-outline' as const, route: '/history' },
+    { title: 'Week-by-week averages', detail: 'Compare each week and export the summary', icon: 'calendar-outline' as const, route: '/weekly-breakdown' },
+  ] },
+  { title: 'Activity', items: [
+    { title: 'Workout history', detail: 'Review your recent workout sessions', icon: 'barbell-outline' as const, route: '/workout-history' },
   ] },
   { title: 'App', items: [
     { title: 'Backup & restore', detail: 'Save or recover your data', icon: 'cloud-upload-outline' as const, route: '/backup' },
+    { title: 'Settings', detail: 'Update your name and weight unit', icon: 'settings-outline' as const, route: '/settings' },
+  ] },
+  { title: 'Data', items: [
+    { title: 'Export spreadsheet (CSV)', detail: 'Save date-wise data that opens in Excel or Sheets', icon: 'document-text-outline' as const, route: '/export' },
+    { title: 'Clear app data', detail: 'Clear one day or all saved data, with confirmation', icon: 'trash-outline' as const, route: '/clear-data' },
   ] },
 ];
 
 export default function MoreScreen() {
-  const db = useSQLiteContext();
-  const [exporting, setExporting] = useState(false);
-
-  const exportData = async () => {
-    if (exporting) return;
-    try {
-      setExporting(true);
-      const file = await createCsvExportFile(db);
-      if (!await Sharing.isAvailableAsync()) {
-        Alert.alert('Sharing is unavailable', 'This device cannot share files from the app right now.');
-        return;
-      }
-      await Sharing.shareAsync(file.uri, {
-        mimeType: 'text/csv',
-        dialogTitle: 'Export Fitness Tracker data',
-        UTI: 'public.comma-separated-values-text',
-      });
-      Alert.alert('Export ready', `${file.filename} contains ${file.rowCount} records and can be opened in Excel or Sheets.`);
-    } catch (error) {
-      console.error('Failed to export tracker data:', error);
-      Alert.alert('Could not export data', 'Please check your device storage and try again.');
-    } finally {
-      setExporting(false);
-    }
-  };
-
   return <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
     <Text style={styles.title}>More</Text>
-    <Text style={styles.subtitle}>Weekly averages, export, and backup</Text>
+    <Text style={styles.subtitle}>Review your progress and manage your data</Text>
     {sections.map((section) => <View key={section.title}>
       <Text style={styles.sectionTitle}>{section.title}</Text>
       <View style={styles.group}>{section.items.map((item, index) => <Pressable key={item.route} style={[styles.row, index > 0 && styles.divided]} onPress={() => router.push(item.route as never)}>
@@ -53,16 +32,6 @@ export default function MoreScreen() {
         <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
       </Pressable>)}</View>
     </View>)}
-    <View>
-      <Text style={styles.sectionTitle}>Data</Text>
-      <View style={styles.group}>
-        <Pressable accessibilityRole="button" accessibilityState={{ disabled: exporting }} disabled={exporting} style={styles.row} onPress={() => void exportData()}>
-          <View style={styles.icon}><Ionicons name="document-text-outline" size={19} color="#25634C" /></View>
-          <View style={styles.copy}><Text style={styles.itemTitle}>Export data to Excel</Text><Text style={styles.detail}>Save a CSV file with your tracking history</Text></View>
-          {exporting ? <ActivityIndicator color="#25634C" /> : <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />}
-        </Pressable>
-      </View>
-    </View>
     <Text style={styles.footnote}>Your tracker data is stored on this device.</Text>
   </ScrollView>;
 }

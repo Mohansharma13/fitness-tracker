@@ -1,4 +1,5 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
+import * as FileSystem from 'expo-file-system/legacy';
 
 const TABLES = [
   'daily_logs', 'foods', 'meals', 'meal_items', 'meal_templates', 'template_items',
@@ -12,9 +13,39 @@ export async function exportBackup(db: SQLiteDatabase): Promise<string> {
   return JSON.stringify({ app: 'fitness-tracker', schemaVersion: 1, exportedAt: new Date().toISOString(), data }, null, 2);
 }
 
+export async function createBackupFile(db: SQLiteDatabase): Promise<{ uri: string; filename: string; recordCount: number }> {
+  if (!FileSystem.cacheDirectory) throw new Error('Temporary file storage is not available on this device.');
+  const content = await exportBackup(db);
+  const data = validateBackup(content);
+  const dateStamp = new Date().toISOString().slice(0, 10);
+  const filename = `Fitness-Tracker-Backup-${dateStamp}.json`;
+  const uri = `${FileSystem.cacheDirectory}${filename}`;
+  await FileSystem.writeAsStringAsync(uri, content, { encoding: FileSystem.EncodingType.UTF8 });
+  const recordCount = Object.values(data).reduce((sum, rows) => sum + rows.length, 0);
+  return { uri, filename, recordCount };
+}
+
+export async function saveBackupToDirectory(db: SQLiteDatabase, directoryUri: string): Promise<{ filename: string; recordCount: number }> {
+  const content = await exportBackup(db);
+  const data = validateBackup(content);
+  const now = new Date();
+  const stamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const filename = `Fitness-Tracker-Backup-${stamp}.json`;
+  const fileUri = await FileSystem.StorageAccessFramework.createFileAsync(
+    directoryUri,
+    filename.replace(/\.json$/i, ''),
+    'application/json',
+  );
+  await FileSystem.writeAsStringAsync(fileUri, content, { encoding: FileSystem.EncodingType.UTF8 });
+  const recordCount = Object.values(data).reduce((sum, rows) => sum + rows.length, 0);
+  return { filename, recordCount };
+}
+
 export function validateBackup(text: string): Record<string, any[]> {
   let value: any;
-  try { value = JSON.parse(text); } catch { throw new Error('The pasted text is not valid JSON.'); }
+  // Some editors and desktop backup tools add a UTF-8 BOM to otherwise valid JSON.
+  const normalizedText = text.replace(/^\uFEFF/, '').trim();
+  try { value = JSON.parse(normalizedText); } catch { throw new Error('The selected backup is not valid JSON.'); }
   if (value?.app !== 'fitness-tracker' || value?.schemaVersion !== 1 || !value?.data || typeof value.data !== 'object') {
     throw new Error('This is not a supported Fitness Tracker backup.');
   }

@@ -96,17 +96,49 @@ export async function createWorkoutTemplateFromWorkout(db: SQLiteDatabase, worko
   const now = new Date().toISOString();
   await db.withTransactionAsync(async () => {
     await db.runAsync('INSERT INTO workout_templates (id, user_id, name, created_at, updated_at, deleted_at, sync_status) VALUES (?, ?, ?, ?, ?, ?, ?)', id, null, templateName, now, now, null, 'local');
-    for (const exercise of exercises) {
-      await db.runAsync('INSERT INTO workout_template_exercises (id, user_id, template_id, exercise_name, sets, reps, weight, notes, created_at, updated_at, deleted_at, sync_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', generateId(), null, id, exercise.exerciseName, exercise.sets, exercise.reps, exercise.weight, exercise.notes, now, now, null, 'local');
+    for (let order = 0; order < exercises.length; order += 1) {
+      const exercise = exercises[order];
+      await db.runAsync('INSERT INTO workout_template_exercises (id, user_id, template_id, exercise_name, sort_order, sets, reps, weight, notes, created_at, updated_at, deleted_at, sync_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', generateId(), null, id, exercise.exerciseName, order, exercise.sets, exercise.reps, exercise.weight, exercise.notes, now, now, null, 'local');
     }
   });
+}
+
+export async function createWorkoutTemplate(
+  db: SQLiteDatabase,
+  name: string,
+  exercises: { exerciseName: string; sets: number; reps: number; weight: number | null }[]
+): Promise<string> {
+  const trimmedName = name.trim();
+  if (!trimmedName) throw new Error('Enter a name for this routine.');
+  if (!exercises.length) throw new Error('Add at least one exercise to this routine.');
+  const duplicate = await db.getFirstAsync<{ id: string }>(
+    'SELECT id FROM workout_templates WHERE name = ? COLLATE NOCASE AND deleted_at IS NULL LIMIT 1',
+    trimmedName
+  );
+  if (duplicate) throw new Error('A routine with this name already exists. Choose a different name.');
+  const id = generateId();
+  const now = new Date().toISOString();
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      'INSERT INTO workout_templates (id, user_id, name, created_at, updated_at, deleted_at, sync_status) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      id, null, trimmedName, now, now, null, 'local'
+    );
+    for (let order = 0; order < exercises.length; order += 1) {
+      const exercise = exercises[order];
+      await db.runAsync(
+        'INSERT INTO workout_template_exercises (id, user_id, template_id, exercise_name, sort_order, sets, reps, weight, notes, created_at, updated_at, deleted_at, sync_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        generateId(), null, id, exercise.exerciseName.trim(), order, exercise.sets, exercise.reps, exercise.weight, null, now, now, null, 'local'
+      );
+    }
+  });
+  return id;
 }
 
 export async function getWorkoutTemplates(db: SQLiteDatabase): Promise<WorkoutTemplate[]> {
   const templates = await db.getAllAsync<any>('SELECT * FROM workout_templates WHERE deleted_at IS NULL ORDER BY name COLLATE NOCASE');
   const result: WorkoutTemplate[] = [];
   for (const template of templates) {
-    const rows = await db.getAllAsync<any>('SELECT * FROM workout_template_exercises WHERE template_id = ? AND deleted_at IS NULL ORDER BY created_at', template.id);
+    const rows = await db.getAllAsync<any>('SELECT * FROM workout_template_exercises WHERE template_id = ? AND deleted_at IS NULL ORDER BY sort_order, created_at', template.id);
     result.push({ id: template.id, name: template.name, createdAt: template.created_at, exercises: rows.map((row) => ({ id: row.id, workoutLogId: '', exerciseName: row.exercise_name, sets: row.sets, reps: row.reps, weight: row.weight, notes: row.notes })) });
   }
   return result;
@@ -115,7 +147,7 @@ export async function getWorkoutTemplates(db: SQLiteDatabase): Promise<WorkoutTe
 export async function applyWorkoutTemplate(db: SQLiteDatabase, templateId: string, date: string): Promise<void> {
   const template = await db.getFirstAsync<{ name: string }>('SELECT name FROM workout_templates WHERE id = ? AND deleted_at IS NULL', templateId);
   if (!template) throw new Error('Workout template not found');
-  const exercises = await db.getAllAsync<any>('SELECT * FROM workout_template_exercises WHERE template_id = ? AND deleted_at IS NULL', templateId);
+  const exercises = await db.getAllAsync<any>('SELECT * FROM workout_template_exercises WHERE template_id = ? AND deleted_at IS NULL ORDER BY sort_order, created_at', templateId);
   const workout = await createWorkoutLog(db, { date, workoutType: template.name, duration: null, notes: null });
   for (const exercise of exercises) await createExerciseLog(db, { workoutLogId: workout.id, exerciseName: exercise.exercise_name, sets: exercise.sets, reps: exercise.reps, weight: exercise.weight, notes: exercise.notes });
 }
@@ -158,10 +190,11 @@ export async function updateWorkoutTemplateContents(
       now,
       templateId
     );
-    for (const exercise of exercises) {
+    for (let order = 0; order < exercises.length; order += 1) {
+      const exercise = exercises[order];
       await db.runAsync(
-        'INSERT INTO workout_template_exercises (id, user_id, template_id, exercise_name, sets, reps, weight, notes, created_at, updated_at, deleted_at, sync_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        generateId(), null, templateId, exercise.exerciseName.trim(), exercise.sets, exercise.reps, exercise.weight, null, now, now, null, 'local'
+        'INSERT INTO workout_template_exercises (id, user_id, template_id, exercise_name, sort_order, sets, reps, weight, notes, created_at, updated_at, deleted_at, sync_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        generateId(), null, templateId, exercise.exerciseName.trim(), order, exercise.sets, exercise.reps, exercise.weight, null, now, now, null, 'local'
       );
     }
   });
@@ -173,6 +206,9 @@ export async function replaceWorkoutTemplateFromWorkout(db: SQLiteDatabase, temp
   await db.withTransactionAsync(async () => {
     await db.runAsync("UPDATE workout_templates SET name = ?, updated_at = ?, sync_status = 'local' WHERE id = ? AND deleted_at IS NULL", workout.workoutType, now, templateId);
     await db.runAsync("UPDATE workout_template_exercises SET deleted_at = ?, updated_at = ?, sync_status = 'local' WHERE template_id = ? AND deleted_at IS NULL", now, now, templateId);
-    for (const exercise of exercises) await db.runAsync('INSERT INTO workout_template_exercises (id, user_id, template_id, exercise_name, sets, reps, weight, notes, created_at, updated_at, deleted_at, sync_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', generateId(), null, templateId, exercise.exerciseName, exercise.sets, exercise.reps, exercise.weight, exercise.notes, now, now, null, 'local');
+    for (let order = 0; order < exercises.length; order += 1) {
+      const exercise = exercises[order];
+      await db.runAsync('INSERT INTO workout_template_exercises (id, user_id, template_id, exercise_name, sort_order, sets, reps, weight, notes, created_at, updated_at, deleted_at, sync_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', generateId(), null, templateId, exercise.exerciseName, order, exercise.sets, exercise.reps, exercise.weight, exercise.notes, now, now, null, 'local');
+    }
   });
 }

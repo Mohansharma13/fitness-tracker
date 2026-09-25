@@ -32,7 +32,7 @@ export async function getExercisesForWorkout(db: SQLiteDatabase, workoutLogId: s
   const rows = await db.getAllAsync<any>(
     `SELECT * FROM exercises
      WHERE workout_log_id = ? AND deleted_at IS NULL
-     ORDER BY created_at ASC`,
+     ORDER BY sort_order ASC, created_at ASC`,
     workoutLogId
   );
   return rows.map(mapExercise);
@@ -72,7 +72,7 @@ export async function getWorkoutsForDate(db: SQLiteDatabase, date: string): Prom
      INNER JOIN daily_logs d ON d.id = w.daily_log_id
      LEFT JOIN exercises e ON e.workout_log_id = w.id AND e.deleted_at IS NULL
      WHERE d.date = ? AND d.deleted_at IS NULL AND w.deleted_at IS NULL
-     ORDER BY w.created_at DESC, e.created_at ASC`,
+     ORDER BY w.created_at DESC, e.sort_order ASC, e.created_at ASC`,
     date
   );
   const workoutsById = new Map<string, WorkoutLog>();
@@ -125,17 +125,43 @@ export async function createExerciseLog(
   await saveExerciseToLibrary(db, input.exerciseName);
   const id = generateId();
   const now = new Date().toISOString();
+  const nextOrder = await db.getFirstAsync<{ next_order: number }>(
+    'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM exercises WHERE workout_log_id = ? AND deleted_at IS NULL',
+    input.workoutLogId
+  );
   await db.runAsync(
     `INSERT INTO exercises (
-      id, user_id, workout_log_id, exercise_name, sets, reps, weight, notes,
+      id, user_id, workout_log_id, exercise_name, sort_order, sets, reps, weight, notes,
       created_at, updated_at, deleted_at, sync_status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    id, null, input.workoutLogId, input.exerciseName.trim(), input.sets, input.reps,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    id, null, input.workoutLogId, input.exerciseName.trim(), nextOrder?.next_order ?? 0, input.sets, input.reps,
     input.weight, input.notes ?? null, now, now, null, 'local'
   );
   const row = await db.getFirstAsync<any>('SELECT * FROM exercises WHERE id = ?', id);
   if (!row) throw new Error('Failed to create exercise log');
   return mapExercise(row);
+}
+
+export async function moveExerciseInWorkout(db: SQLiteDatabase, exerciseId: string, direction: 'up' | 'down'): Promise<void> {
+  await db.withTransactionAsync(async () => {
+    const exercise = await db.getFirstAsync<{ workout_log_id: string }>(
+      'SELECT workout_log_id FROM exercises WHERE id = ? AND deleted_at IS NULL', exerciseId
+    );
+    if (!exercise) return;
+    const rows = await db.getAllAsync<{ id: string }>(
+      'SELECT id FROM exercises WHERE workout_log_id = ? AND deleted_at IS NULL ORDER BY sort_order ASC, created_at ASC',
+      exercise.workout_log_id
+    );
+    const index = rows.findIndex((row) => row.id === exerciseId);
+    const target = index + (direction === 'up' ? -1 : 1);
+    if (index < 0 || target < 0 || target >= rows.length) return;
+    const reordered = [...rows];
+    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+    const now = new Date().toISOString();
+    for (let order = 0; order < reordered.length; order += 1) {
+      await db.runAsync("UPDATE exercises SET sort_order = ?, updated_at = ?, sync_status = 'local' WHERE id = ?", order, now, reordered[order].id);
+    }
+  });
 }
 
 export async function deleteExerciseLog(db: SQLiteDatabase, exerciseId: string): Promise<void> {

@@ -10,9 +10,10 @@ import {
   View,
 } from 'react-native';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   router,
+  useFocusEffect,
   useLocalSearchParams,
 } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -42,7 +43,7 @@ import type { MealMacros } from '../types/meal';
 type SelectedFood = {
   id: string;
   food: Food;
-  quantity: number;
+  quantity: string;
 };
 
 const MEAL_TYPES = [
@@ -83,8 +84,11 @@ export default function AddMealScreen() {
   const [foods, setFoods] =
     useState<Food[]>([]);
 
-  const [selectedFoods, setSelectedFoods] =
-    useState<SelectedFood[]>([]);
+  const [selectedFoodsByMeal, setSelectedFoodsByMeal] =
+    useState<Partial<Record<string, SelectedFood[]>>>({});
+  const activeMealKey = editMealId ?? mealName;
+  const selectedFoods = selectedFoodsByMeal[activeMealKey] ?? [];
+  const draftMealCount = MEAL_TYPES.filter((type) => (selectedFoodsByMeal[type]?.length ?? 0) > 0).length;
 
   const [loading, setLoading] =
     useState(false);
@@ -92,6 +96,31 @@ export default function AddMealScreen() {
   const [saving, setSaving] =
     useState(false);
   const searchRequestId = useRef(0);
+  const openingFoodLibrary = useRef(false);
+  const resetDraftOnFocus = useRef(false);
+
+  const resetNewMealDraft = useCallback(() => {
+    setMealName(requestedMode === 'quick' ? 'Lunch' : 'Breakfast');
+    setEntryMode(requestedMode === 'quick' ? 'quick' : 'foods');
+    setQuickValues({ calories: '', protein: '', carbs: '', fat: '', fibre: '' });
+    setSearch('');
+    setFoods([]);
+    setSelectedFoodsByMeal({});
+    setSaving(false);
+    searchRequestId.current += 1;
+  }, [requestedMode]);
+
+  useFocusEffect(useCallback(() => {
+    if (!editMealId && resetDraftOnFocus.current) resetNewMealDraft();
+    resetDraftOnFocus.current = false;
+    return () => {
+      if (openingFoodLibrary.current) {
+        openingFoodLibrary.current = false;
+      } else if (!editMealId) {
+        resetDraftOnFocus.current = true;
+      }
+    };
+  }, [editMealId, resetNewMealDraft]));
 
   /*
    * Load existing meal when editing
@@ -124,13 +153,13 @@ export default function AddMealScreen() {
           });
         }
 
-        setSelectedFoods(
-          meal.items.map((item) => ({
+        setSelectedFoodsByMeal({
+          [editMealId!]: meal.items.map((item) => ({
             id: item.id,
             food: item.food!,
-            quantity: item.quantity,
+            quantity: String(item.quantity),
           }))
-        );
+        });
       } catch (error) {
         console.error(
           'Failed to load meal:',
@@ -177,15 +206,19 @@ export default function AddMealScreen() {
    * Duplicate foods are allowed.
    */
   const addFood = (food: Food) => {
+    if (!Number.isFinite(food.servingSize) || food.servingSize <= 0) {
+      Alert.alert('Food serving size is invalid', 'Edit this food and enter a serving size greater than zero before adding it to a meal.');
+      return;
+    }
     searchRequestId.current += 1;
-    setSelectedFoods((current) => [
+    setSelectedFoodsByMeal((current) => ({
       ...current,
-      {
+      [activeMealKey]: [...(current[activeMealKey] ?? []), {
         id: generateId(),
         food,
-        quantity: food.servingSize,
-      },
-    ]);
+        quantity: String(food.servingSize),
+      }],
+    }));
 
     setSearch('');
     setFoods([]);
@@ -199,18 +232,12 @@ export default function AddMealScreen() {
     selectedFoodId: string,
     value: string
   ) => {
-    const quantity = Number(value);
-
-    setSelectedFoods((current) =>
-      current.map((item) =>
-        item.id === selectedFoodId
-          ? {
-              ...item,
-              quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : 0,
-            }
-          : item
-      )
-    );
+    setSelectedFoodsByMeal((current) => ({
+      ...current,
+      [activeMealKey]: (current[activeMealKey] ?? []).map((item) => item.id === selectedFoodId
+        ? { ...item, quantity: value }
+        : item),
+    }));
   };
 
   /*
@@ -220,12 +247,10 @@ export default function AddMealScreen() {
   const removeFood = (
     selectedFoodId: string
   ) => {
-    setSelectedFoods((current) =>
-      current.filter(
-        (item) =>
-          item.id !== selectedFoodId
-      )
-    );
+    setSelectedFoodsByMeal((current) => ({
+      ...current,
+      [activeMealKey]: (current[activeMealKey] ?? []).filter((item) => item.id !== selectedFoodId),
+    }));
   };
 
   /*
@@ -235,9 +260,10 @@ export default function AddMealScreen() {
   const calculateMacros = (
     item: SelectedFood
   ) => {
-    const multiplier =
-      item.quantity /
-      item.food.servingSize;
+    const quantity = Number(item.quantity);
+    const multiplier = Number.isFinite(quantity) && quantity > 0 && Number.isFinite(item.food.servingSize) && item.food.servingSize > 0
+      ? quantity / item.food.servingSize
+      : 0;
 
     return {
       calories:
@@ -313,13 +339,22 @@ export default function AddMealScreen() {
         return;
       }
 
-      if (entryMode === 'foods' && selectedFoods.length === 0) {
-        Alert.alert('Add a food first', 'Choose at least one food for this meal.');
+      const foodMeals = MEAL_TYPES
+        .map((type) => ({ name: type, items: selectedFoodsByMeal[type] ?? [] }))
+        .filter((meal) => meal.items.length > 0);
+
+      if (entryMode === 'foods' && (editMealId ? selectedFoods.length === 0 : foodMeals.length === 0)) {
+        Alert.alert('Add a food first', 'Choose at least one food for the selected meal.');
         return;
       }
 
-      if (entryMode === 'foods' && selectedFoods.some((item) => !Number.isFinite(item.quantity) || item.quantity <= 0)) {
+      const invalidItems = editMealId ? selectedFoods : foodMeals.flatMap((meal) => meal.items);
+      if (entryMode === 'foods' && invalidItems.some((item) => !Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0)) {
         Alert.alert('Check food quantities', 'Each food quantity must be greater than zero grams.');
+        return;
+      }
+      if (entryMode === 'foods' && invalidItems.some((item) => !Number.isFinite(item.food.servingSize) || item.food.servingSize <= 0)) {
+        Alert.alert('Food serving size is invalid', 'Update the serving size for each affected food before saving this meal.');
         return;
       }
 
@@ -357,7 +392,7 @@ export default function AddMealScreen() {
             entryMode === 'quick' ? [] : selectedFoods.map(
               (item) => ({
                 foodId: item.food.id,
-                quantity: item.quantity,
+                quantity: Number(item.quantity),
               })
             ),
             quickMacros
@@ -370,10 +405,14 @@ export default function AddMealScreen() {
         else {
           await db.withTransactionAsync(async () => {
             const dailyLog = await getOrCreateDailyLog(db, { date: mealDate });
-            const meal = await createMeal(db, dailyLog.id, mealName.trim(), quickMacros);
-            if (entryMode === 'foods') {
-              for (const item of selectedFoods) {
-                await addMealItem(db, meal.id, item.food.id, item.quantity);
+            if (entryMode === 'quick') {
+              await createMeal(db, dailyLog.id, mealName.trim(), quickMacros);
+            } else {
+              for (const mealDraft of foodMeals) {
+                const meal = await createMeal(db, dailyLog.id, mealDraft.name, null);
+                for (const item of mealDraft.items) {
+                  await addMealItem(db, meal.id, item.food.id, Number(item.quantity));
+                }
               }
             }
           });
@@ -436,7 +475,7 @@ export default function AddMealScreen() {
         </Text>
 
         {!editMealId && entryMode === 'foods' && <Pressable
-          onPress={() => router.push({ pathname: '/foods', params: { date: mealDate, ...(returnToHistory ? { returnTo: 'history' } : {}) } } as never)}
+          onPress={() => { openingFoodLibrary.current = true; router.push({ pathname: '/foods', params: { date: mealDate, ...(returnToHistory ? { returnTo: 'history' } : {}) } } as never); }}
           style={styles.libraryButton}
         >
           <Text style={styles.libraryButtonText}>Open Food Library</Text>
@@ -468,6 +507,9 @@ export default function AddMealScreen() {
                     type
                   )
                 }
+                accessibilityRole="button"
+                accessibilityState={{ selected: mealName === type }}
+                accessibilityLabel={`${type}${selectedFoodsByMeal[type]?.length ? `, ${selectedFoodsByMeal[type].length} foods added` : ', no foods added yet'}`}
                 style={[
                   styles.mealTypeButton,
                   mealName ===
@@ -483,12 +525,13 @@ export default function AddMealScreen() {
                       styles.mealTypeTextActive,
                   ]}
                 >
-                  {type}
+                  {type}{selectedFoodsByMeal[type]?.length ? ` · ${selectedFoodsByMeal[type].length}` : ''}
                 </Text>
               </Pressable>
             )
           )}
         </ScrollView>
+        {entryMode === 'foods' && <Text style={styles.mealTypeHint}>Foods are saved under the selected meal. Switching meals shows that meal’s own foods.</Text>}
 
         <View style={styles.modeSwitch}>
           <Pressable onPress={() => setEntryMode('foods')} style={[styles.modeButton, entryMode === 'foods' && styles.modeButtonActive]}>
@@ -700,9 +743,7 @@ export default function AddMealScreen() {
                     </Text>
 
                     <TextInput
-                      value={String(
-                        item.quantity
-                      )}
+                      value={item.quantity}
                       onChangeText={(
                         value
                       ) =>
@@ -712,10 +753,11 @@ export default function AddMealScreen() {
                         )
                       }
                       keyboardType="decimal-pad"
-                      style={
-                        styles.quantityInput
-                      }
+                      returnKeyType="done"
+                      accessibilityLabel={`Quantity in grams for ${item.food.name}`}
+                      style={[styles.quantityInput, (!Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0) && styles.quantityInputInvalid]}
                     />
+                    {(!Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0) && <Text style={styles.quantityError}>Enter a quantity greater than 0 g.</Text>}
 
                     <View
                       style={
@@ -837,7 +879,7 @@ export default function AddMealScreen() {
                   ? 'Saving...'
                   : editMealId
                     ? 'Save Changes'
-                    : 'Save Meal'}
+                    : draftMealCount > 0 ? `Save ${draftMealCount} ${draftMealCount === 1 ? 'Meal' : 'Meals'}` : 'Add foods to continue'}
               </Text>
             </Pressable>
           </>
@@ -948,6 +990,7 @@ const styles = StyleSheet.create({
   mealTypeScroll: {
     marginBottom: 5,
   },
+  mealTypeHint: { color: '#6B7280', fontSize: 12, lineHeight: 17, marginTop: 2, marginBottom: 4 },
 
   mealTypeButton: {
     paddingHorizontal: 17,
@@ -1087,6 +1130,8 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#111827',
   },
+  quantityInputInvalid: { borderColor: '#DC2626', backgroundColor: '#FEF2F2' },
+  quantityError: { color: '#B91C1C', fontSize: 12, marginTop: 5 },
 
   macroRow: {
     flexDirection: 'row',
