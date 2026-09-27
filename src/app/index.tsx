@@ -425,9 +425,19 @@ export default function DashboardScreen() {
           App title
           ====================================================== */}
 
-      <Text style={styles.title}>
+      <View style={styles.titleRow}>
+        <Text style={styles.title}>
           {profileName ? `${profileName}’s Tracker` : 'Fitness Tracker'}
-      </Text>
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open notes"
+          onPress={() => router.push('/notes' as never)}
+          style={({ pressed }) => [styles.notesShortcut, pressed && styles.shortcutPressed]}>
+          <Ionicons name="document-text-outline" size={16} color="#25634C" />
+          <Text style={styles.notesShortcutText}>Notes</Text>
+        </Pressable>
+      </View>
 
 
       {/* Show that these values belong to today */}
@@ -924,6 +934,10 @@ function Macro({
 // component around its content.
 //
 const styles = StyleSheet.create({
+  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  notesShortcut: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 11, paddingVertical: 8, borderRadius: 11, backgroundColor: '#EAF4EF' },
+  notesShortcutText: { color: '#25634C', fontSize: 12, fontWeight: '700' },
+  shortcutPressed: { opacity: 0.7 },
   datePickerRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 },
   dateButton: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, width: 40, height: 42, alignItems: 'center', justifyContent: 'center' },
   dateButtonText: { color: '#111827', fontSize: 25, fontWeight: '600', lineHeight: 29 },

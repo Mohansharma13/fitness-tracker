@@ -5,7 +5,9 @@ import { getTodayDate } from '../utils/date';
 const TABLES = [
   'daily_logs', 'foods', 'meals', 'meal_items', 'meal_templates', 'template_items',
   'workout_logs', 'exercises', 'exercise_library', 'workout_templates', 'workout_template_exercises', 'weekly_tracking_goals', 'app_settings',
+  'notes',
 ] as const;
+// Delete child tables before parent tables so replace restores respect foreign keys.
 const DELETE_ORDER = [...TABLES].reverse();
 
 export async function exportBackup(db: SQLiteDatabase): Promise<string> {
@@ -54,7 +56,7 @@ export function validateBackup(text: string): Record<string, any[]> {
   const data: Record<string, any[]> = {};
   for (const table of TABLES) {
     const rows = value.data[table];
-    if ((table === 'exercise_library' || table === 'app_settings' || table === 'weekly_tracking_goals') && rows === undefined) { data[table] = []; continue; }
+    if ((table === 'exercise_library' || table === 'app_settings' || table === 'weekly_tracking_goals' || table === 'notes') && rows === undefined) { data[table] = []; continue; }
     if (!Array.isArray(rows)) throw new Error(`Backup is missing the ${table} data.`);
     if (rows.some((row) => !row || typeof row !== 'object' || typeof row.id !== 'string')) throw new Error(`Backup contains an invalid row in ${table}.`);
     data[table] = rows;

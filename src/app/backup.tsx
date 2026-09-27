@@ -182,7 +182,7 @@ export default function BackupScreen() {
       <View style={styles.card}>
         <View style={styles.sectionIcon}><Text style={styles.sectionIconText}>↑</Text></View>
         <Text style={styles.heading}>Save a backup</Text>
-        <Text style={styles.body}>Create a JSON file with your logs, foods, routines, settings, and saved order. Keep a copy somewhere outside the app.</Text>
+        <Text style={styles.body}>Create a JSON file with your logs, notes, foods, routines, settings, and saved order. Keep a copy somewhere outside the app.</Text>
         <Pressable accessibilityRole="button" onPress={createExport} disabled={busy} style={[styles.button, busy && styles.disabled]}>
           {busyAction === 'export' ? <ActivityIndicator color="#FFF" /> : <Text style={styles.buttonText}>{backupFile ? 'Create a new backup' : 'Create backup file'}</Text>}
         </Pressable>

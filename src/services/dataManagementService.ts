@@ -1,6 +1,8 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
 const allTablesDeleteOrder = [
+  // Remove notes along with the rest of a user's locally stored data.
+  'notes',
   'goals',
   'app_settings',
   'weekly_tracking_goals',

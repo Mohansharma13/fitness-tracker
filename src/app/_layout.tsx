@@ -82,6 +82,13 @@ function AppTabs() {
         }}
       />
       <Tabs.Screen
+        name="notes"
+        options={{
+          title: 'Notes',
+          tabBarIcon: ({ color, size }) => <Ionicons name="document-text-outline" color={color} size={size} />,
+        }}
+      />
+      <Tabs.Screen
         name="explore"
         options={{
           title: 'More',

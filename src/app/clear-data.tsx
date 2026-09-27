@@ -36,7 +36,7 @@ export default function ClearDataScreen() {
 
   const confirmClearAll = () => {
     if (busy) return;
-    Alert.alert('Clear all app data?', 'This permanently deletes all dates of meal and workout history, weight and steps, saved foods, templates, goals, and app preferences from this device. This cannot be undone. Create a backup first if you may need any of it.', [
+    Alert.alert('Clear all app data?', 'This permanently deletes all dates of meal and workout history, notes, weight and steps, saved foods, templates, goals, and app preferences from this device. This cannot be undone. Create a backup first if you may need any of it.', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Continue', style: 'destructive', onPress: () => Alert.alert('Final confirmation', 'Are you sure you want to permanently remove all Fitness Tracker data from this device?', [
         { text: 'Keep my data', style: 'cancel' },
@@ -68,7 +68,7 @@ export default function ClearDataScreen() {
     </View>
 
     <View style={styles.allCard}>
-      <View style={styles.cardHeading}><View style={styles.icon}><Ionicons name="trash-outline" size={19} color="#B42318" /></View><View style={styles.copy}><Text style={styles.allTitle}>Clear everything</Text><Text style={styles.detail}>Remove all dates, saved foods and plans, goals, and preferences.</Text></View></View>
+      <View style={styles.cardHeading}><View style={styles.icon}><Ionicons name="trash-outline" size={19} color="#B42318" /></View><View style={styles.copy}><Text style={styles.allTitle}>Clear everything</Text><Text style={styles.detail}>Remove all dates, notes, saved foods and plans, goals, and preferences.</Text></View></View>
       <Pressable accessibilityRole="button" disabled={busy} onPress={confirmClearAll} style={[styles.allButton, busy && styles.disabled]}>
         {busy ? <ActivityIndicator color="#FFF" /> : <Text style={styles.allButtonText}>Clear all app data</Text>}
       </Pressable>
