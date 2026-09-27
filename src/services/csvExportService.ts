@@ -29,7 +29,9 @@ export type CsvExportData = { filename: string; rowCount: number; contents: stri
 function csvCell(value: CsvCell): string {
   if (value == null) return '';
   let text = String(value);
+  // Prefix formula-like text so spreadsheet apps do not execute user-entered data.
   if (typeof value === 'string' && /^[\t\r ]*[=+\-@]/.test(text)) text = `'${text}`;
+  // CSV quotes are escaped by doubling them; wrapping every value also protects commas/newlines.
   return `"${text.replace(/"/g, '""')}"`;
 }
 

@@ -1,6 +1,7 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
 export async function migrateDatabase(db: SQLiteDatabase) {
+  // CREATE IF NOT EXISTS makes initialization safe to repeat on every app launch.
   await db.execAsync(`
     PRAGMA foreign_keys = ON;
 

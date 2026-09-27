@@ -8,6 +8,7 @@ type SelectedDateContextValue = {
 
 const SelectedDateContext = createContext<SelectedDateContextValue | null>(null);
 
+// Keep the selected day shared between Today and screens that edit historical data.
 export function SelectedDateProvider({ children }: PropsWithChildren) {
   const [selectedDate, setSelectedDate] = useState(getTodayDate);
   return (

@@ -8,6 +8,7 @@ import type {
 import { generateId } from '../utils/id';
 
 function mapDailyLog(row: any): DailyLog {
+  // Convert SQLite snake_case columns and integer flags to the app's camelCase model.
   return {
     id: row.id,
     userId: row.user_id,

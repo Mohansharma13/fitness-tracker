@@ -32,6 +32,8 @@ export type WeeklyAverage = RangeAverage & { weekNumber: number };
 function validateRange(startDate: string, endDate: string) {
   if (!isValidDateString(startDate) || !isValidDateString(endDate)) throw new Error('Enter both dates in YYYY-MM-DD format.');
   if (startDate > endDate) throw new Error('Start date must be on or before the end date.');
+  // Use UTC midnight here so daylight-saving changes cannot make a calendar day
+  // appear to be 23 or 25 hours long when counting the inclusive range.
   const days = Math.floor((Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86400000) + 1;
   if (days > 3660) throw new Error('Choose a date range of 10 years or less.');
   return days;
@@ -64,6 +66,7 @@ export async function getDailyMetricsInRange(db: SQLiteDatabase, startDate: stri
     ORDER BY d.date
   `, startDate, endDate);
 
+  // Fill dates with zero-valued metrics so averages include unlogged days too.
   const byDate = new Map(stored.map((row) => [row.date, row]));
   return Array.from({ length: dayCount }, (_, index) => {
     const date = shiftDate(startDate, index);
@@ -73,6 +76,8 @@ export async function getDailyMetricsInRange(db: SQLiteDatabase, startDate: stri
 
 export function averageMetrics(days: DateMetrics[], startDate: string, endDate: string): RangeAverage {
   const count = days.length;
+  // Weight is averaged only across days with a measurement; activity/nutrition
+  // averages use every calendar day in the selected range.
   const measuredWeights = days.flatMap((day) => day.weight == null ? [] : [day.weight]);
   const sum = (key: 'calories' | 'protein' | 'carbs' | 'fat' | 'fibre' | 'steps') => days.reduce((total, day) => total + day[key], 0) / count;
   return {
@@ -92,6 +97,8 @@ export async function getRangeAverage(db: SQLiteDatabase, startDate: string, end
 export async function getWeeklyAverages(db: SQLiteDatabase, startDate: string, endDate: string): Promise<WeeklyAverage[]> {
   const days = await getDailyMetricsInRange(db, startDate, endDate);
   const weeks: WeeklyAverage[] = [];
+  // Weeks are consecutive seven-day windows beginning at the requested start date;
+  // the first and last windows may therefore be partial weeks.
   for (let offset = 0, weekNumber = 1; offset < days.length; offset += 7, weekNumber += 1) {
     const weekDays = days.slice(offset, offset + 7);
     weeks.push({ ...averageMetrics(weekDays, weekDays[0].date, weekDays[weekDays.length - 1].date), weekNumber });

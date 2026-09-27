@@ -11,6 +11,7 @@ function calculateFoodMacros(
   },
   quantity: number
 ): MealMacros {
+  // Food nutrition is stored per serving size; scale each value to the logged quantity.
   const multiplier = quantity / food.servingSize;
 
   return {
@@ -25,6 +26,7 @@ function calculateFoodMacros(
 export function calculateMealMacros(
   meal: MealWithItems
 ): MealMacros {
+  // Quick-entry meals already contain totals and have no food items to sum.
   if (meal.quickMacros) return meal.quickMacros;
 
   return meal.items.reduce(

@@ -20,6 +20,7 @@ export function useDailyDashboard(
   const requestId = useRef(0);
 
   const loadDashboard = useCallback(async () => {
+    // Ignore older requests that finish after the user has selected another date.
     const request = ++requestId.current;
     try {
       setLoading(true);

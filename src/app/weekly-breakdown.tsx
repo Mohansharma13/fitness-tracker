@@ -26,6 +26,7 @@ export default function WeeklyBreakdownScreen() {
   const [weightUnit, setWeightUnit] = useState<WeightUnit>('kg');
   const rangeRequestRef = useRef(0);
 
+  // Guard async range calculations so a slower, earlier selection cannot replace newer results.
   useEffect(() => {
     const request = ++rangeRequestRef.current;
     getWeeklyAverages(db, initialRange.start, initialRange.end)
