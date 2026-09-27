@@ -10,9 +10,9 @@ export function getNotes(db: SQLiteDatabase) {
 
 export async function saveNote(db: SQLiteDatabase, input: { id?: string; title: string; content: string }) {
   const now = new Date().toISOString();
-  // Keep the original creation time when editing; only new notes get a generated ID.
+  // Upsert lets the editor persist a stable draft ID as the user types.
   if (input.id) {
-    await db.runAsync('UPDATE notes SET title = ?, content = ?, updated_at = ? WHERE id = ?', input.title, input.content, now, input.id);
+    await db.runAsync('INSERT INTO notes (id, title, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET title = excluded.title, content = excluded.content, updated_at = excluded.updated_at', input.id, input.title, input.content, now, now);
   } else {
     await db.runAsync('INSERT INTO notes (id, title, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?)', generateId(), input.title, input.content, now, now);
   }
